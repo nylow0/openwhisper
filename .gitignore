@@ -1,3 +1,32 @@
-
 .plan/
 
+# Dependencies and local environments
+node_modules/
+.venv/
+services/asr/.venv/
+
+# Build outputs
+dist/
+build/
+apps/desktop/dist/
+crates/**/target/
+
+# Caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.svelte-kit/
+.vite/
+
+# Logs and local scratch
+*.log
+rust-out.log
+rust-err.log
+test-pipe.js
+run-test.ps1
+
+# Local machine state
+.DS_Store
+Thumbs.db

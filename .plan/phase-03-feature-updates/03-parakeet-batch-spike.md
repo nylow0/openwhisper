@@ -51,11 +51,26 @@ Do not edit the worker entry point in this update.
 
 ## Acceptance
 
-- One command runs the batch spike against a local WAV.
-- The output is human-readable.
-- The script does not require Electron or Rust.
-- The script does not create product-facing abstractions yet.
+- [x] One command runs the batch spike against a local WAV.
+- [x] The output is human-readable.
+- [x] The script does not require Electron or Rust.
+- [x] The script does not create product-facing abstractions yet.
+
+## Result
+
+- `services/asr/scripts/parakeet_batch_spike.py` created.
+- `nvidia/parakeet-tdt-0.6b-v3` loaded successfully on Windows CPU through NeMo.
+- Batch transcription ran successfully against a temporary synthetic 5s 16 kHz mono WAV.
+- Synthetic non-speech audio produced an empty transcript, as expected.
+- Warm-cache load time was about 11 seconds.
+- Transcription time was about 0.42 seconds for 5 seconds of audio.
+- Hugging Face cache size was about 2.34 GB for the model.
+- Peak CPU RAM was about 5.5 GB, which exceeds the Phase 3 hard gate of 3 GB and is a serious risk to record in the final Go/No-Go report.
+- CUDA/GPU performance was not measured because the environment uses CPU-only PyTorch.
+- No real speech WAV was available, so WER and real transcript quality remain unmeasured.
 
 ## Stop Conditions
 
 Stop and document the failure if the model cannot load or the cache is unexpectedly huge. Do not hide a bad result behind retries or unrelated refactors.
+
+**None triggered for batch loading/transcription.** The peak RAM result is a major warning for later Phase 3 evaluation.

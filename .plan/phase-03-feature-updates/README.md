@@ -24,9 +24,9 @@ Each update is written to be self-contained because the next agent may only have
 
 | Update | Status | Purpose |
 |---|---|---|
-| [01 Environment Compatibility](01-environment-compatibility.md) | Not started | Find working Python/PyTorch/NeMo versions on Windows |
-| [02 Test Data Contract](02-test-data-contract.md) | Not started | Define reproducible local WAV/reference inputs |
-| [03 Parakeet Batch Spike](03-parakeet-batch-spike.md) | Not started | Prove model load and WAV batch transcription |
+| [01 Environment Compatibility](01-environment-compatibility.md) | Complete | Find working Python/PyTorch/NeMo versions on Windows |
+| [02 Test Data Contract](02-test-data-contract.md) | Complete | Define reproducible local WAV/reference inputs |
+| [03 Parakeet Batch Spike](03-parakeet-batch-spike.md) | Complete | Prove model load and WAV batch transcription |
 | [04 Parakeet Chunked Spike](04-parakeet-chunked-spike.md) | Not started | Prove chunk-style inference before worker integration |
 | [05 ASR Engine Interface](05-asr-engine-interface.md) | Not started | Add a generic engine boundary with Parakeet behind it |
 | [06 Benchmark CLI](06-benchmark-cli.md) | Not started | Measure WER, latency, memory, and cache size |

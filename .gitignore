@@ -1,5 +1,3 @@
-.plan/
-
 # Dependencies and local environments
 node_modules/
 .venv/

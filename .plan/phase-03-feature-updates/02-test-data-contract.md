@@ -52,10 +52,19 @@ services/asr/test_data/
 
 ## Acceptance
 
-- A future benchmark command can discover what files to use.
-- The README explains how to add local samples.
-- The repo stays clean: no large or questionable audio files are committed.
+- [x] A future benchmark command can discover what files to use.
+- [x] The README explains how to add local samples.
+- [x] The repo stays clean: no large or questionable audio files are committed.
+
+## Result
+
+- `services/asr/test_data/README.md` created with full contract.
+- `services/asr/test_data/.gitignore` created to block audio and run artifacts.
+- `services/asr/test_data/samples/` directory created with `.gitkeep` for structure.
+- Document references benchmark discovery pseudocode, filename conventions, and reference-text rules.
 
 ## Stop Conditions
 
 Stop if the work requires downloading a dataset. That belongs in a separate explicit task because dataset licensing and size matter.
+
+**None triggered.**

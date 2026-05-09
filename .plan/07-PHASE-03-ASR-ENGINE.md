@@ -54,6 +54,10 @@ Failure means:
 
 ## Work Items for Delegation
 
+For smaller agent-sized tasks, use the split feature-update briefs in
+[phase-03-feature-updates/](phase-03-feature-updates/). Keep this document as the
+source phase overview and decision gate.
+
 ### 1. Environment Spike
 
 Scope:

@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "HealthCheck": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "health.check" },
+        "timestamp": { "type": "integer" }
+      }
+    },
+    "HealthOk": {
+      "type": "object",
+      "required": ["type", "status"],
+      "properties": {
+        "type": { "const": "health.ok" },
+        "timestamp": { "type": "integer" },
+        "status": { "type": "string" }
+      }
+    },
+    "AudioChunk": {
+      "type": "object",
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "audio.chunk" },
+        "data": { "type": "string", "description": "Base64-encoded PCM audio" },
+        "timestamp": { "type": "integer" }
+      }
+    },
+    "TranscriptPartial": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "transcript.partial" },
+        "text": { "type": "string" },
+        "isFinal": { "type": "boolean", "const": false }
+      }
+    },
+    "TranscriptFinal": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "transcript.final" },
+        "text": { "type": "string" },
+        "words": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": { "type": "string" },
+              "startMs": { "type": "integer" },
+              "endMs": { "type": "integer" },
+              "confidence": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

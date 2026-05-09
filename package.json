@@ -1,0 +1,20 @@
+{
+  "name": "openwhisper",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --cwd apps/desktop dev",
+    "build": "bun run --cwd apps/desktop build",
+    "test": "bun run --cwd apps/desktop test",
+    "cargo:build": "cargo build --manifest-path crates/openwhisper-native/Cargo.toml",
+    "cargo:dev": "cargo run --manifest-path crates/openwhisper-native/Cargo.toml",
+    "python:run": "cd services/asr && uv run python -m openwhisper_asr",
+    "setup": "bun install && cargo fetch && cd services/asr && uv sync"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+}

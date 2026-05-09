@@ -54,4 +54,4 @@ packages/protocol/     # Shared schemas
 
 See `.plan/` directory for detailed planning documents.
 
-Start with: `.plan/00-INDEX.md`
+Start with: `.plan/00-INDEX.md`, then read `.plan/19-PLAN-REVIEW.md` for the current corrected direction.

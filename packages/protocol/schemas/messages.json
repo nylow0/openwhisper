@@ -1,9 +1,20 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
+    "Error": {
+      "type": "object",
+      "required": ["type", "code", "message", "recoverable"],
+      "properties": {
+        "type": { "const": "error" },
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "recoverable": { "type": "boolean" },
+        "details": { "type": "object" }
+      }
+    },
     "HealthCheck": {
       "type": "object",
-      "required": ["type"],
+      "required": ["type", "timestamp"],
       "properties": {
         "type": { "const": "health.check" },
         "timestamp": { "type": "integer" }
@@ -11,49 +22,65 @@
     },
     "HealthOk": {
       "type": "object",
-      "required": ["type", "status"],
+      "required": ["type", "timestamp", "status"],
       "properties": {
         "type": { "const": "health.ok" },
         "timestamp": { "type": "integer" },
-        "status": { "type": "string" }
+        "status": { "enum": ["ready", "loading", "error"] }
+      }
+    },
+    "Status": {
+      "type": "object",
+      "required": ["type", "isDictating", "isModelLoaded", "workerHealthy"],
+      "properties": {
+        "type": { "const": "status" },
+        "isDictating": { "type": "boolean" },
+        "isModelLoaded": { "type": "boolean" },
+        "workerHealthy": { "type": "boolean" }
       }
     },
     "AudioChunk": {
       "type": "object",
-      "required": ["type", "data"],
+      "required": ["type", "data", "timestamp", "is_final"],
       "properties": {
         "type": { "const": "audio.chunk" },
         "data": { "type": "string", "description": "Base64-encoded PCM audio" },
-        "timestamp": { "type": "integer" }
+        "timestamp": { "type": "integer" },
+        "is_final": { "type": "boolean" }
+      }
+    },
+    "WordResult": {
+      "type": "object",
+      "required": ["text", "startMs", "endMs"],
+      "properties": {
+        "text": { "type": "string" },
+        "startMs": { "type": "integer" },
+        "endMs": { "type": "integer" },
+        "confidence": { "type": "number" }
       }
     },
     "TranscriptPartial": {
       "type": "object",
-      "required": ["type", "text"],
+      "required": ["type", "text", "isFinal"],
       "properties": {
         "type": { "const": "transcript.partial" },
         "text": { "type": "string" },
-        "isFinal": { "type": "boolean", "const": false }
+        "isFinal": { "const": false },
+        "processingLatencyMs": { "type": "integer" }
       }
     },
     "TranscriptFinal": {
       "type": "object",
-      "required": ["type", "text"],
+      "required": ["type", "text", "words"],
       "properties": {
         "type": { "const": "transcript.final" },
         "text": { "type": "string" },
         "words": {
           "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "text": { "type": "string" },
-              "startMs": { "type": "integer" },
-              "endMs": { "type": "integer" },
-              "confidence": { "type": "number" }
-            }
-          }
-        }
+          "items": { "$ref": "#/definitions/WordResult" }
+        },
+        "language": { "type": ["string", "null"] },
+        "processingLatencyMs": { "type": "integer" }
       }
     }
   }

@@ -17,6 +17,7 @@ __pycache__/
 .ruff_cache/
 .svelte-kit/
 .vite/
+services/asr/.local/
 
 # Logs and local scratch
 *.log

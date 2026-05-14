@@ -39,15 +39,15 @@ bun dev
 cargo run --manifest-path crates/openwhisper-native/Cargo.toml
 
 # Run Python ASR worker
-cd services/asr && uv run python -m openwhisper_asr
+cd asr && uv run python -m openwhisper_asr
 ```
 
 ## Project Structure
 
 ```
-apps/desktop/          # Electron app
+apps/desktop/               # Electron app
 crates/openwhisper-native/  # Rust helper
-services/asr/          # Thin wrapper around sibling openwhisper-asr core repo
-packages/protocol/     # Shared schemas
-.plan/                 # Planning documents
+asr/                        # Thin wrapper around sibling openwhisper-asr core repo
+packages/protocol/          # Shared schemas
+.plan/                      # Planning documents
 

@@ -11,4 +11,4 @@ dependencies = [
 package = false
 
 [tool.uv.sources]
-openwhisper-asr = { path = "../../../openwhisper-asr", editable = true }
+openwhisper-asr = { path = "../../openwhisper-asr", editable = true }

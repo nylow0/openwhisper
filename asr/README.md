@@ -14,7 +14,7 @@ During development this wrapper depends on the sibling repo through a local edit
 
 ```toml
 [tool.uv.sources]
-openwhisper-asr = { path = "../../../openwhisper-asr", editable = true }
+openwhisper-asr = { path = "../../openwhisper-asr", editable = true }
 ```
 
 When the ASR core is published or pinned to Git, replace the local path with a specific version, tag, or commit. Do not depend on floating `main` for the product repo.

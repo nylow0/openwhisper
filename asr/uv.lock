@@ -15,7 +15,7 @@ resolution-markers = [
 [[package]]
 name = "openwhisper-asr"
 version = "0.1.0"
-source = { editable = "../../../openwhisper-asr" }
+source = { editable = "../../openwhisper-asr" }
 
 [package.metadata]
 requires-dist = [
@@ -41,4 +41,4 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "openwhisper-asr", editable = "../../../openwhisper-asr" }]
+requires-dist = [{ name = "openwhisper-asr", editable = "../../openwhisper-asr" }]

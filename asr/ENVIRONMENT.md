@@ -6,7 +6,7 @@ Historical Phase 3 environment note.
 
 The reusable Python ASR package now lives in the sibling repo named `openwhisper-asr`.
 
-This `services/asr` directory is only the OpenWhisper integration wrapper. Run NeMo/Parakeet environment checks from the ASR core repo, not from this wrapper.
+This `asr` directory is only the OpenWhisper integration wrapper. Run NeMo/Parakeet environment checks from the ASR core repo, not from this wrapper.
 
 ## Exact Versions
 

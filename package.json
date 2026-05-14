@@ -10,9 +10,9 @@
     "build": "bun run --cwd apps/desktop build",
     "typecheck": "bun run --cwd apps/desktop typecheck",
     "test": "bun run --cwd apps/desktop test",
-    "check": "bun run --cwd apps/desktop typecheck && cargo check --manifest-path crates/openwhisper-native/Cargo.toml && cd asr && uv --cache-dir ../.uv-cache run python -m openwhisper_asr --help",
-    "cargo:build": "cargo build --manifest-path crates/openwhisper-native/Cargo.toml",
-    "cargo:dev": "cargo run --manifest-path crates/openwhisper-native/Cargo.toml",
+    "check": "bun run --cwd apps/desktop typecheck && cargo check --manifest-path crates/openwhisper-native/Cargo.toml --target x86_64-pc-windows-msvc && cd asr && uv --cache-dir ../.uv-cache run python -m openwhisper_asr --help",
+    "cargo:build": "cargo build --manifest-path crates/openwhisper-native/Cargo.toml --target x86_64-pc-windows-msvc",
+    "cargo:dev": "cargo run --manifest-path crates/openwhisper-native/Cargo.toml --target x86_64-pc-windows-msvc",
     "python:run": "cd asr && uv --cache-dir ../.uv-cache run python -m openwhisper_asr",
     "setup": "bun install && cargo fetch && cd asr && uv --cache-dir ../.uv-cache sync"
   },

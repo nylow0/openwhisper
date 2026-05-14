@@ -7,7 +7,8 @@ import json
 import sys
 from typing import Sequence
 
-from openwhisper_asr.engine import MockASREngine
+from openwhisper_asr.engine import ASREngine, MockASREngine
+from openwhisper_asr.engines.whisper_cpp import WhisperCppEngine, list_profile_names
 from openwhisper_asr.protocol import send_transcript_final
 from openwhisper_asr.worker.stdio import run_worker
 
@@ -25,8 +26,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Transcript text to emit",
     )
 
-    transcribe_parser = subparsers.add_parser("transcribe", help="Transcribe an audio file with the mock engine")
+    subparsers.add_parser("profiles", help="List configured whisper.cpp profiles")
+
+    transcribe_parser = subparsers.add_parser("transcribe", help="Transcribe an audio file")
     transcribe_parser.add_argument("audio", help="Path to the audio file")
+    transcribe_parser.add_argument("--engine", choices=["whispercpp", "mock"], default="whispercpp")
+    transcribe_parser.add_argument("--model", default="medium_en_q8", help="Model key or alias: base, medium")
+    transcribe_parser.add_argument("--device", choices=["auto", "cpu", "gpu"], default="auto")
+    transcribe_parser.add_argument("--profile", help="Exact whisper.cpp profile name")
+    transcribe_parser.add_argument("--timeout", type=int, default=300, help="whisper.cpp timeout in seconds")
     transcribe_parser.add_argument("--json", action="store_true", help="Print full JSON result")
 
     return parser
@@ -40,9 +48,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_worker()
 
     if args.command == "mock":
-        engine = MockASREngine(text=args.text)
-        engine.load_model()
-        result = engine.transcribe_batch("mock.wav")
+        mock_engine = MockASREngine(text=args.text)
+        mock_engine.load_model()
+        result = mock_engine.transcribe_batch("mock.wav")
         send_transcript_final(
             text=result.text,
             words=result.words,
@@ -51,10 +59,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "profiles":
+        print(json.dumps({"profiles": list_profile_names()}, indent=2), flush=True)
+        return 0
+
     if args.command == "transcribe":
-        engine = MockASREngine()
-        engine.load_model()
-        result = engine.transcribe_batch(args.audio)
+        asr_engine: ASREngine
+        if args.engine == "mock":
+            asr_engine = MockASREngine()
+        else:
+            asr_engine = WhisperCppEngine(profile=args.profile, timeout_seconds=args.timeout)
+        asr_engine.load_model(model=args.model, device=args.device)
+        result = asr_engine.transcribe_batch(args.audio)
         if args.json:
             payload = {
                 "text": result.text,

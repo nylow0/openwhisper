@@ -15,6 +15,7 @@ to it through one of these interfaces:
 uv sync --extra dev
 uv run python -m openwhisper_asr --help
 uv run ow-asr serve
+uv run ow-asr profiles
 ```
 
 ## Interfaces
@@ -25,6 +26,12 @@ uv run ow-asr serve
 
 # Protocol smoke test
 '{"type":"health.check","timestamp":1}' | uv run ow-asr serve
+
+# Real whisper.cpp transcription with the default medium q8 profile
+uv run ow-asr transcribe .\test_data\samples\librispeech-clean-6930-75918-0000.wav
+
+# Faster base q8 smoke test
+uv run ow-asr transcribe .\test_data\samples\librispeech-clean-6930-75918-0000.wav --model base --device cpu
 
 # Mock transcription for protocol/UI work
 uv run ow-asr mock

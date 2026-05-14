@@ -7,6 +7,7 @@ node_modules/
 dist/
 build/
 apps/desktop/dist/
+apps/desktop/release/
 crates/**/target/
 
 # Caches

@@ -1,7 +1,7 @@
 # Dependencies and local environments
 node_modules/
 .venv/
-asr/.venv/
+asr/
 
 # Build outputs
 dist/
@@ -17,7 +17,6 @@ __pycache__/
 .ruff_cache/
 .svelte-kit/
 .vite/
-asr/.local/
 
 # Logs and local scratch
 *.log
@@ -25,6 +24,7 @@ rust-out.log
 rust-err.log
 test-pipe.js
 run-test.ps1
+.plan/
 
 # Local machine state
 .DS_Store

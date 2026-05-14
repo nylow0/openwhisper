@@ -10,11 +10,11 @@
     "build": "bun run --cwd apps/desktop build",
     "typecheck": "bun run --cwd apps/desktop typecheck",
     "test": "bun run --cwd apps/desktop test",
-    "check": "bun run --cwd apps/desktop typecheck && cargo check --manifest-path crates/openwhisper-native/Cargo.toml && cd asr && uv run python -m openwhisper_asr --help",
+    "check": "bun run --cwd apps/desktop typecheck && cargo check --manifest-path crates/openwhisper-native/Cargo.toml && cd ../openwhisper-asr && uv run python -m openwhisper_asr --help",
     "cargo:build": "cargo build --manifest-path crates/openwhisper-native/Cargo.toml",
     "cargo:dev": "cargo run --manifest-path crates/openwhisper-native/Cargo.toml",
-    "python:run": "cd asr && uv run python -m openwhisper_asr",
-    "setup": "bun install && cargo fetch && cd asr && uv sync"
+    "python:run": "cd ../openwhisper-asr && uv run python -m openwhisper_asr",
+    "setup": "bun install && cargo fetch && cd ../openwhisper-asr && uv sync"
   },
   "devDependencies": {
     "@types/node": "^20.0.0"

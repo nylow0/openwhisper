@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "engine": "whisper.cpp",
+  "path_base": "config_file",
+  "benchmark_audio_seconds": 136.52,
+  "models": {
+    "base_en_q8": {
+      "file": "../models/ggml-base.en-q8_0.bin",
+      "size_bytes": 81781811,
+      "sha256": "a4d4a0768075e13cfd7e19df3ae2dbc4a68d37d36a7dad45e8410c9a34f8c87e"
+    },
+    "medium_en_q8": {
+      "file": "../models/ggml-medium.en-q8_0.bin",
+      "size_bytes": 823382461,
+      "sha256": "43fa2cd084de5a04399a896a9a7a786064e221365c01700cea4666005218f11c"
+    }
+  },
+  "binary_hints": {
+    "cpu_avx_vnni": {
+      "env": "OPENWHISPER_WHISPERCPP_CPU_EXE",
+      "local_dev_path": ".local/whispercpp-src/build-cpu-avxvnni-local/bin/whisper-cli.exe",
+      "notes": "CPU-only Release build with AVX_VNNI enabled for 13th Gen Intel CPUs."
+    },
+    "gpu_cuda_sm120": {
+      "env": "OPENWHISPER_WHISPERCPP_GPU_EXE",
+      "prepend_path_env": "OPENWHISPER_WHISPERCPP_GPU_PATH",
+      "local_dev_path": ".local/whispercpp-src/build-cuda-sm120-local/bin/whisper-cli.exe",
+      "notes": "CUDA Release build targeting sm_120 / Blackwell for the RTX 5060."
+    }
+  },
+  "profiles": {
+    "cpu_avx_vnni_base_en_q8": {
+      "device": "cpu",
+      "binary_hint": "cpu_avx_vnni",
+      "model": "base_en_q8",
+      "args": ["-l", "en", "-nt", "-oj", "-np", "-t", "16", "-ac", "1024"],
+      "benchmark": {
+        "wer_percent": 3.98,
+        "first_result_seconds": 0.65,
+        "wall_seconds": 7.93,
+        "rtf": 0.058,
+        "peak_ram_mb": 232.1,
+        "peak_vram_delta_mb": 0
+      }
+    },
+    "cpu_avx_vnni_medium_en_q8": {
+      "device": "cpu",
+      "binary_hint": "cpu_avx_vnni",
+      "model": "medium_en_q8",
+      "args": ["-l", "en", "-nt", "-oj", "-np", "-t", "16", "-ac", "1024"],
+      "benchmark": {
+        "wer_percent": 2.19,
+        "first_result_seconds": 2.71,
+        "wall_seconds": 62.05,
+        "rtf": 0.455,
+        "peak_ram_mb": 1392.4,
+        "peak_vram_delta_mb": 0
+      }
+    },
+    "gpu_cuda_sm120_base_en_q8": {
+      "device": "gpu",
+      "binary_hint": "gpu_cuda_sm120",
+      "model": "base_en_q8",
+      "args": ["-l", "en", "-nt", "-oj", "-np", "-bs", "1", "-bo", "1", "-nf"],
+      "benchmark": {
+        "wer_percent": 3.59,
+        "first_result_seconds": 0.63,
+        "wall_seconds": 2.49,
+        "rtf": 0.018,
+        "peak_ram_mb": 422.3,
+        "peak_vram_delta_mb": 413
+      }
+    },
+    "gpu_cuda_sm120_medium_en_q8": {
+      "device": "gpu",
+      "binary_hint": "gpu_cuda_sm120",
+      "model": "medium_en_q8",
+      "args": ["-l", "en", "-nt", "-oj", "-np"],
+      "benchmark": {
+        "wer_percent": 2.39,
+        "first_result_seconds": 1.25,
+        "wall_seconds": 10.5,
+        "rtf": 0.077,
+        "peak_ram_mb": 440.2,
+        "peak_vram_delta_mb": 1617
+      }
+    }
+  },
+  "rejected_profiles": [
+    {
+      "name": "cpu_ac384",
+      "args": ["-t", "16", "-ac", "384"],
+      "reason": "Fast startup but unacceptable WER: base 83.27%, medium 106.97%."
+    },
+    {
+      "name": "cpu_processors_4",
+      "args": ["-p", "4", "-t", "4", "-ac", "1024"],
+      "reason": "Worse first result, wall time, memory use, and WER on the 25-clip benchmark."
+    },
+    {
+      "name": "gpu_medium_greedy",
+      "args": ["-bs", "1", "-bo", "1", "-nf"],
+      "reason": "Faster wall time but worse medium q8 WER: 2.59% vs 2.39%."
+    }
+  ]
+}

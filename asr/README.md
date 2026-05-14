@@ -8,6 +8,17 @@ OpenWhisper still runs the worker from here so the Rust helper can keep using th
 uv run python -m openwhisper_asr
 ```
 
+## whisper.cpp Assets
+
+Product-side whisper.cpp profiles live in `config/whispercpp-profiles.json`.
+The currently validated q8 models are tracked under `models/`:
+
+- `ggml-base.en-q8_0.bin`
+- `ggml-medium.en-q8_0.bin`
+
+These model files are stored with Git LFS because the medium q8 model is too
+large for normal Git hosting.
+
 The actual Python package, protocol helpers, worker implementation, engine experiments, and CLI live in `openwhisper-asr`.
 
 During development this wrapper depends on the sibling repo through a local editable path:

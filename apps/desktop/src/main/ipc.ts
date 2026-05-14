@@ -203,10 +203,6 @@ export function setupIpcHandlers(): void {
   });
 }
 
-export function getRustClient(): RustClient | null {
-  return rustClient;
-}
-
 async function getStatus(): Promise<StatusEvent> {
   if (!rustClient) throw new Error('Rust not connected');
   const response = await rustClient.request({ type: 'status.get' }, 'status', 5_000);

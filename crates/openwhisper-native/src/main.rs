@@ -90,9 +90,6 @@ async fn main() -> Result<()> {
         worker_healthy: true,
     }));
 
-    // Clone for potential shutdown signaling
-    let _shutdown_tx = ipc_event_tx.clone();
-
     // Main bridge loop
     let state_clone = state.clone();
     let bridge_handle = tokio::spawn(async move {
@@ -201,7 +198,7 @@ async fn main() -> Result<()> {
                         FromPython::AudioError { error, code } => {
                             log::error!("Python audio.error ({}): {}", code, error);
                             let _ = ipc_event_tx.send(IpcEvent::Error {
-                                code: code,
+                                code,
                                 message: error,
                                 recoverable: true,
                             }).await;

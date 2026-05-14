@@ -112,11 +112,3 @@ export type Event =
   | TranscriptFinalEvent
   | StatusEvent
   | ErrorEvent;
-
-export interface TranscriptionResult {
-  text: string;
-  words: WordResult[];
-  language: string | null;
-  isPartial: boolean;
-  processingLatencyMs: number;
-}

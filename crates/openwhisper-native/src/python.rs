@@ -27,8 +27,7 @@ fn find_service_dir() -> Result<PathBuf> {
 }
 
 pub struct PythonWorker {
-    #[allow(dead_code)]
-    child: Child,
+    _child: Child,
     tx: mpsc::Sender<ToPython>,
     rx: mpsc::Receiver<FromPython>,
 }
@@ -57,7 +56,6 @@ impl PythonWorker {
 
         let (to_python_tx, mut to_python_rx) = mpsc::channel::<ToPython>(100);
         let (from_python_tx, from_python_rx) = mpsc::channel::<FromPython>(100);
-        let (health_tx, _health_rx) = mpsc::channel::<bool>(10);
 
         // Writer task
         let writer_tx = to_python_tx.clone();
@@ -88,7 +86,6 @@ impl PythonWorker {
         });
 
         // Reader task
-        let health_tx_reader = health_tx.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
             let mut line = String::new();
@@ -106,9 +103,6 @@ impl PythonWorker {
                         }
                         match serde_json::from_str::<FromPython>(trimmed) {
                             Ok(msg) => {
-                                if let FromPython::HealthOk { .. } = &msg {
-                                    let _ = health_tx_reader.send(true).await;
-                                }
                                 if from_python_tx.send(msg).await.is_err() {
                                     log::info!("Python event receiver dropped");
                                     break;
@@ -148,7 +142,7 @@ impl PythonWorker {
         });
 
         Ok(PythonWorker {
-            child,
+            _child: child,
             tx: to_python_tx.clone(),
             rx: from_python_rx,
         })

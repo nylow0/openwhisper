@@ -1,17 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TranscriptionResult {
-    pub text: String,
-    pub words: Vec<WordResult>,
-    pub language: Option<String>,
-    #[serde(rename = "isPartial", alias = "is_partial")]
-    pub is_partial: bool,
-    #[serde(rename = "processingLatencyMs", alias = "processing_latency_ms")]
-    pub processing_latency_ms: u32,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WordResult {
     pub text: String,
@@ -31,7 +19,6 @@ pub struct PythonSettings {
 
 // ─── Messages Rust → Python ───
 
-#[allow(dead_code)]
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum ToPython {
@@ -47,24 +34,8 @@ pub enum ToPython {
     #[serde(rename = "dictation.stop")]
     DictationStop,
 
-    #[serde(rename = "audio.chunk")]
-    AudioChunk {
-        data: String,
-        timestamp: u64,
-        is_final: bool,
-    },
-
-    #[serde(rename = "model.load")]
-    ModelLoad {
-        model_path: String,
-        device: String,
-    },
-
     #[serde(rename = "settings.update")]
     SettingsUpdate { settings: PythonSettings },
-
-    #[serde(rename = "shutdown")]
-    Shutdown,
 }
 
 // ─── Messages Python → Rust ───

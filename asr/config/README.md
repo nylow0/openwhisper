@@ -1,0 +1,21 @@
+# whisper.cpp Profiles
+
+This directory stores ASR runtime profiles for whisper.cpp.
+
+The model binaries are not stored in this directory. OpenWhisper keeps
+product-owned model assets in the repo-level `models/` directory. Runtime code
+should resolve the model directory from `OPENWHISPER_MODEL_DIR`, falling back to
+the local path described in `whispercpp-profiles.json` for development.
+
+## Recommended Profiles
+
+| Profile | Use case |
+|---|---|
+| `gpu_cuda_sm120_medium_en_q8` | Best current medium q8 profile when the RTX 5060 CUDA build is available. |
+| `gpu_cuda_sm120_base_en_q8` | Fastest validated base q8 GPU profile. |
+| `cpu_avx_vnni_medium_en_q8` | Best current medium q8 CPU fallback profile. |
+| `cpu_avx_vnni_base_en_q8` | Best current base q8 CPU fallback profile. |
+
+Benchmarks were run on 25 LibriSpeech `test-other` clips totaling `136.52s` of
+audio. `first_result_seconds` is the time until the first per-sample transcript
+JSON appeared.

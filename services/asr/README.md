@@ -1,6 +1,6 @@
 # OpenWhisper ASR Service
 
-This directory is a thin integration wrapper for the reusable ASR core repo at:
+This directory is a thin integration wrapper for the reusable ASR core repo, expected during local development as a sibling directory named `openwhisper-asr`.
 
 OpenWhisper still runs the worker from here so the Rust helper can keep using the existing service boundary:
 

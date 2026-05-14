@@ -1,7 +1,7 @@
 # Dependencies and local environments
 node_modules/
 .venv/
-asr/
+.uv-cache/
 
 # Build outputs
 dist/

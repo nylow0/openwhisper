@@ -27,6 +27,15 @@ uv run ow-asr serve
 # Protocol smoke test
 '{"type":"health.check","timestamp":1}' | uv run ow-asr serve
 
+# List microphone input devices
+uv run --extra recording ow-asr devices
+
+# Record a 5 second 16 kHz mono WAV
+uv run --extra recording ow-asr record .\.local\recordings\test.wav --seconds 5
+
+# Record and immediately transcribe
+uv run --extra recording ow-asr record .\.local\recordings\test.wav --seconds 5 --transcribe
+
 # Real whisper.cpp transcription with the default medium q8 profile
 uv run ow-asr transcribe .\test_data\samples\librispeech-clean-6930-75918-0000.wav
 

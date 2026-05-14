@@ -27,11 +27,7 @@ cd openwhisper
 bun run setup
 ```
 
-The Python ASR core is expected next to this repo during local development:
-
-```text
-C:\Business\openwhisper-asr
-```
+The Python ASR core is expected next to this repo during local development as a sibling directory named `openwhisper-asr`.
 
 ### Development
 

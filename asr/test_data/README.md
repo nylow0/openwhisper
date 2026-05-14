@@ -9,7 +9,7 @@ This directory defines the reproducible local test inputs for Phase 3 ASR spikes
 ## Directory Layout
 
 ```text
-services/asr/test_data/
+asr/test_data/
   README.md              # this file
   .gitignore             # blocks *.wav, *.mp3, *.flac from git
   samples/
@@ -29,8 +29,8 @@ Any script that needs test data should look here:
 
 | Path | Purpose |
 |------|---------|
-| `services/asr/test_data/samples/*.wav` | Audio input files |
-| `services/asr/test_data/samples/*.txt` | Reference transcripts (same basename) |
+| `asr/test_data/samples/*.wav` | Audio input files |
+| `asr/test_data/samples/*.txt` | Reference transcripts (same basename) |
 
 ---
 
@@ -94,7 +94,7 @@ the quick brown fox jumps over the lazy dog
 
 ## How to Add Local Samples
 
-1. Place `.wav` and matching `.txt` files into `services/asr/test_data/samples/`.
+1. Place `.wav` and matching `.txt` files into `asr/test_data/samples/`.
 2. Verify the audio meets the requirements above.
 3. **Do not** `git add` the WAV. The `.gitignore` already blocks them.
 4. If you want to record what samples you used for a specific run, add a line to your benchmark output or a local `run-notes.md` (also gitignored).
@@ -129,7 +129,7 @@ def discover_samples():
 If no samples are found, the benchmark must print:
 
 ```text
-No test samples found in services/asr/test_data/samples/
+No test samples found in asr/test_data/samples/
 Add .wav + .txt pairs locally. See test_data/README.md
 ```
 
@@ -147,3 +147,4 @@ Add .wav + .txt pairs locally. See test_data/README.md
 - Phase 3 ASR overview: `.plan/07-PHASE-03-ASR-ENGINE.md`
 - Performance budget: `.plan/17-PERFORMANCE-BUDGET.md`
 - Benchmark CLI update: `.plan/phase-03-feature-updates/06-benchmark-cli.md`
+

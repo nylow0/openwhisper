@@ -6,7 +6,7 @@ Windows-first offline dictation desktop app.
 
 - **Electron + Svelte + TypeScript**: UI layer
 - **Rust**: Native Windows helper (hotkeys, injection)
-- **Python + NeMo**: ASR worker (speech recognition)
+- **Python ASR core**: reusable ASR worker package in sibling repo `openwhisper-asr`
 
 ## Quick Start
 
@@ -27,6 +27,12 @@ cd openwhisper
 bun run setup
 ```
 
+The Python ASR core is expected next to this repo during local development:
+
+```text
+C:\Business\openwhisper-asr
+```
+
 ### Development
 
 ```bash
@@ -45,7 +51,7 @@ cd services/asr && uv run python -m openwhisper_asr
 ```
 apps/desktop/          # Electron app
 crates/openwhisper-native/  # Rust helper
-services/asr/          # Python ASR worker
+services/asr/          # Thin wrapper around sibling openwhisper-asr core repo
 packages/protocol/     # Shared schemas
 .plan/                 # Planning documents
 

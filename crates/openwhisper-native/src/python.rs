@@ -15,15 +15,15 @@ const HEALTH_CHECK_INTERVAL_SECS: u64 = 5;
 fn find_service_dir() -> Result<PathBuf> {
     let mut dir = std::env::current_dir()?;
     loop {
-        let candidate = dir.join("asr");
-        if candidate.exists() {
+        let candidate = dir.join("openwhisper-asr");
+        if candidate.join("pyproject.toml").exists() {
             return Ok(candidate);
         }
         if !dir.pop() {
             break;
         }
     }
-    Err(anyhow::anyhow!("Could not find asr from current directory"))
+    Err(anyhow::anyhow!("Could not find sibling openwhisper-asr from current directory"))
 }
 
 pub struct PythonWorker {

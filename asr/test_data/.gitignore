@@ -1,7 +1,0 @@
-# Ignore all audio and per-run artifacts in test_data
-*.wav
-*.mp3
-*.flac
-*.ogg
-run-notes.md
-*.json

@@ -7,6 +7,7 @@ Windows-first offline dictation desktop app.
 - **Electron + Svelte + TypeScript**: UI layer
 - **Rust**: Native Windows helper (hotkeys, injection)
 - **Python ASR core**: reusable ASR worker package in sibling repo `openwhisper-asr`
+- **Models**: product-owned runtime model assets in `models/`
 
 ## Quick Start
 
@@ -27,7 +28,9 @@ cd openwhisper
 bun run setup
 ```
 
-The Python ASR core is expected next to this repo during local development as a sibling directory named `openwhisper-asr`.
+The Python ASR core is expected next to this repo during local development as a
+sibling directory named `openwhisper-asr`. The q8 whisper.cpp model assets live
+in this repo under `models/` and are tracked with Git LFS.
 
 ### Development
 
@@ -39,15 +42,14 @@ bun dev
 cargo run --manifest-path crates/openwhisper-native/Cargo.toml
 
 # Run Python ASR worker
-cd asr && uv run python -m openwhisper_asr
+cd ../openwhisper-asr && uv run python -m openwhisper_asr
 ```
 
 ## Project Structure
 
-```
+```text
 apps/desktop/               # Electron app
 crates/openwhisper-native/  # Rust helper
-asr/                        # Thin wrapper around sibling openwhisper-asr core repo
+models/                     # Git LFS model assets used by the product
 packages/protocol/          # Shared schemas
-.plan/                      # Planning documents
-
+```

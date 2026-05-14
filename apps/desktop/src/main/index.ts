@@ -39,16 +39,27 @@ function startRustHelper(): Promise<string> {
     const electronPid = process.pid;
     const pipeName = `\\\\.\\pipe\\OpenWhisper-${electronPid}`;
     const projectRoot = path.resolve(__dirname, '..', '..', '..', '..');
-    const binaryPath = path.join(
-      projectRoot,
-      'crates',
-      'openwhisper-native',
-      'target',
-      'debug',
-      'openwhisper-native.exe'
-    );
+    const binaryPaths = [
+      path.join(
+        projectRoot,
+        'crates',
+        'openwhisper-native',
+        'target',
+        'x86_64-pc-windows-msvc',
+        'debug',
+        'openwhisper-native.exe'
+      ),
+      path.join(
+        projectRoot,
+        'crates',
+        'openwhisper-native',
+        'target',
+        'debug',
+        'openwhisper-native.exe'
+      ),
+    ];
     const rustCwd = path.join(projectRoot, 'crates', 'openwhisper-native');
-    const useBinary = fs.existsSync(binaryPath);
+    const binaryPath = binaryPaths.find((candidate) => fs.existsSync(candidate));
     let settled = false;
 
     const settleReady = (): void => {
@@ -57,12 +68,12 @@ function startRustHelper(): Promise<string> {
       resolve(pipeName);
     };
 
-    rustProcess = useBinary
+    rustProcess = binaryPath
       ? spawn(binaryPath, ['--pipe-pid', String(electronPid)], {
           cwd: projectRoot,
           stdio: ['ignore', 'pipe', 'pipe'],
         })
-      : spawn('cargo', ['run', '--', '--pipe-pid', String(electronPid)], {
+      : spawn('cargo', ['run', '--target', 'x86_64-pc-windows-msvc', '--', '--pipe-pid', String(electronPid)], {
           cwd: rustCwd,
           stdio: ['ignore', 'pipe', 'pipe'],
         });

@@ -1,6 +1,8 @@
 {
   "name": "@openwhisper/desktop",
   "version": "0.1.0",
+  "description": "Windows-first offline dictation desktop app",
+  "author": "Dany",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,15 +11,14 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "test": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview",
-    "electron:dev": "vite build && electron .",
-    "electron:build": "vite build && electron-builder"
+    "electron:dev": "tsc && vite build && electron .",
+    "electron:build": "tsc && vite build && electron-builder"
   },
-  "dependencies": {
-    "electron": "^28.0.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^3.0.0",
     "@tsconfig/svelte": "^5.0.0",
+    "electron": "^28.0.0",
     "electron-builder": "^24.0.0",
     "svelte": "^4.0.0",
     "svelte-check": "^3.0.0",
@@ -26,5 +27,20 @@
     "typescript": "^6.0.3",
     "vite": "^5.0.0"
   },
-  "main": "dist/main/index.js"
+  "main": "dist/main/index.js",
+  "build": {
+    "appId": "com.openwhisper.desktop",
+    "productName": "OpenWhisper",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "dir",
+      "signAndEditExecutable": false
+    }
+  }
 }

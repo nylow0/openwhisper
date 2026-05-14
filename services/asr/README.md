@@ -2,10 +2,6 @@
 
 This directory is a thin integration wrapper for the reusable ASR core repo at:
 
-```text
-C:\Business\openwhisper-asr
-```
-
 OpenWhisper still runs the worker from here so the Rust helper can keep using the existing service boundary:
 
 ```powershell

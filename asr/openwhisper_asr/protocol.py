@@ -139,3 +139,27 @@ def send_model_error(error: str, recoverable: bool, output_stream: TextIO | None
         },
         output_stream=output_stream,
     )
+
+
+def send_audio_error(error: str, code: str, output_stream: TextIO | None = None) -> None:
+    """Send an audio.error event."""
+    send_message(
+        {
+            "type": "audio.error",
+            "error": error,
+            "code": code,
+        },
+        output_stream=output_stream,
+    )
+
+
+def send_transcript_error(error: str, chunk_timestamp: int, output_stream: TextIO | None = None) -> None:
+    """Send a transcript.error event."""
+    send_message(
+        {
+            "type": "transcript.error",
+            "error": error,
+            "chunk_timestamp": chunk_timestamp,
+        },
+        output_stream=output_stream,
+    )

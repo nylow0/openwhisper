@@ -8,6 +8,7 @@ dist/
 build/
 apps/desktop/dist/
 apps/desktop/release/
+apps/desktop/release-*/
 crates/**/target/
 
 # Caches

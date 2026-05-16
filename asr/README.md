@@ -28,13 +28,13 @@ uv run ow-asr serve
 '{"type":"health.check","timestamp":1}' | uv run ow-asr serve
 
 # List microphone input devices
-uv run --extra recording ow-asr devices
+uv run ow-asr devices
 
 # Record a 5 second 16 kHz mono WAV
-uv run --extra recording ow-asr record .\.local\recordings\test.wav --seconds 5
+uv run ow-asr record .\.local\recordings\test.wav --seconds 5
 
 # Record and immediately transcribe
-uv run --extra recording ow-asr record .\.local\recordings\test.wav --seconds 5 --transcribe
+uv run ow-asr record .\.local\recordings\test.wav --seconds 5 --transcribe
 
 # Real whisper.cpp transcription with the default medium q8 profile
 uv run ow-asr transcribe .\test_data\samples\librispeech-clean-6930-75918-0000.wav
@@ -44,6 +44,9 @@ uv run ow-asr transcribe .\test_data\samples\librispeech-clean-6930-75918-0000.w
 
 # Mock transcription for protocol/UI work
 uv run ow-asr mock
+
+# Mock stdio worker for protocol/UI work
+$env:OPENWHISPER_ASR_ENGINE="mock"; uv run ow-asr serve
 ```
 
 Heavy model runtimes are optional. Install them only when testing that engine:

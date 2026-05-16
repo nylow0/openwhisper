@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Reusable ASR core for OpenWhisper products"
 readme = "README.md"
 requires-python = ">=3.10,<3.12"
-dependencies = []
+dependencies = [
+    "sounddevice>=0.4.6",
+]
 
 [project.optional-dependencies]
 nemo = [
@@ -16,7 +18,6 @@ nemo = [
     "psutil>=5.9.0",
 ]
 recording = [
-    "sounddevice>=0.4.6",
     "numpy>=1.24.0",
 ]
 dev = [

@@ -166,6 +166,8 @@ async fn main() -> Result<()> {
                         }
                         FromPython::ModelError { error, recoverable } => {
                             log::error!("Python model.error: {} (recoverable={})", error, recoverable);
+                            let mut s = state_clone.write().await;
+                            s.is_dictating = false;
                             let _ = ipc_event_tx.send(IpcEvent::Error {
                                 code: "MODEL_LOAD_FAILED".to_string(),
                                 message: error,
@@ -197,6 +199,8 @@ async fn main() -> Result<()> {
                         }
                         FromPython::AudioError { error, code } => {
                             log::error!("Python audio.error ({}): {}", code, error);
+                            let mut s = state_clone.write().await;
+                            s.is_dictating = false;
                             let _ = ipc_event_tx.send(IpcEvent::Error {
                                 code,
                                 message: error,

@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, globalShortcut } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, type ChildProcess } from 'child_process';
@@ -10,21 +10,26 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let rustProcess: ChildProcess | null = null;
+const DICTATION_HOTKEY = 'CommandOrControl+Alt+Space';
 
-async function createWindow(): Promise<void> {
+function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
     },
   });
 
   setMainWindow(mainWindow);
   setupIpcHandlers();
+}
 
+async function loadMainWindow(): Promise<void> {
+  if (!mainWindow) throw new Error('Main window has not been created');
   if (process.env.VITE_DEV_SERVER_URL) {
     await mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
@@ -34,11 +39,39 @@ async function createWindow(): Promise<void> {
   await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 }
 
+function findProjectRoot(): string {
+  const starts = [
+    process.env.OPENWHISPER_PROJECT_ROOT,
+    process.cwd(),
+    path.dirname(app.getPath('exe')),
+    __dirname,
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const seen = new Set<string>();
+
+  for (const start of starts) {
+    let current = path.resolve(start);
+    while (!seen.has(current)) {
+      seen.add(current);
+      const hasNativeCrate = fs.existsSync(
+        path.join(current, 'crates', 'openwhisper-native', 'Cargo.toml')
+      );
+      const hasAsrPackage = fs.existsSync(path.join(current, 'asr', 'pyproject.toml'));
+      if (hasNativeCrate && hasAsrPackage) return current;
+
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+
+  throw new Error('Could not find OpenWhisper project root from packaged app location');
+}
+
 function startRustHelper(): Promise<string> {
   return new Promise((resolve, reject) => {
     const electronPid = process.pid;
     const pipeName = `\\\\.\\pipe\\OpenWhisper-${electronPid}`;
-    const projectRoot = path.resolve(__dirname, '..', '..', '..', '..');
+    const projectRoot = findProjectRoot();
     const binaryPaths = [
       path.join(
         projectRoot,
@@ -104,8 +137,19 @@ function startRustHelper(): Promise<string> {
   });
 }
 
+function registerGlobalShortcuts(): void {
+  const registered = globalShortcut.register(DICTATION_HOTKEY, () => {
+    mainWindow?.webContents.send('hotkey:toggle-dictation');
+  });
+
+  if (!registered) {
+    console.warn(`[Main] Failed to register global shortcut ${DICTATION_HOTKEY}`);
+  }
+}
+
 app.whenReady().then(async () => {
-  await createWindow();
+  createWindow();
+  registerGlobalShortcuts();
 
   try {
     const pipeName = await startRustHelper();
@@ -114,6 +158,8 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('[Main] Failed to start/connect to Rust helper:', err);
   }
+
+  await loadMainWindow();
 });
 
 app.on('window-all-closed', () => {
@@ -121,5 +167,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  globalShortcut.unregisterAll();
   rustProcess?.kill();
 });

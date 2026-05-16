@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import threading
 import wave
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -56,6 +57,130 @@ class RecordingResult:
     sample_rate_hz: int
     channels: int
     frames: int
+
+
+class RecordingSession:
+    """Start/stop WAV recorder for app-driven dictation sessions."""
+
+    def __init__(
+        self,
+        output_path: str | Path,
+        sample_rate_hz: int = DEFAULT_SAMPLE_RATE_HZ,
+        channels: int = DEFAULT_CHANNELS,
+        device: int | str | None = None,
+        blocksize: int = DEFAULT_BLOCKSIZE,
+    ) -> None:
+        if sample_rate_hz <= 0:
+            raise RecordingError("Sample rate must be greater than zero")
+        if channels <= 0:
+            raise RecordingError("Channel count must be greater than zero")
+        if blocksize <= 0:
+            raise RecordingError("Block size must be greater than zero")
+
+        self.path = Path(output_path)
+        self.sample_rate_hz = sample_rate_hz
+        self.channels = channels
+        self.device = device
+        self.blocksize = blocksize
+        self._sounddevice = _sounddevice()
+        self._chunks: list[bytes] = []
+        self._overflowed = False
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._context: _InputStream | None = None
+        self._stream: _InputStream | None = None
+        self._error: RecordingError | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            raise RecordingError("Recording session has already started")
+
+        try:
+            context = self._sounddevice.RawInputStream(
+                samplerate=self.sample_rate_hz,
+                channels=self.channels,
+                dtype=DEFAULT_DTYPE,
+                blocksize=self.blocksize,
+                device=self.device,
+            )
+            self._stream = context.__enter__()
+            self._context = context
+        except Exception as exc:
+            raise RecordingError(f"Failed to start audio recording: {exc}") from exc
+
+        self._thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> RecordingResult:
+        thread = self._thread
+        if thread is None:
+            raise RecordingError("Recording session has not started")
+
+        self._stop_event.set()
+        thread.join(timeout=5.0)
+        if thread.is_alive():
+            raise RecordingError("Recording session did not stop within 5 seconds")
+
+        self._close_stream()
+
+        if self._error is not None:
+            raise self._error
+        if not self._chunks:
+            raise RecordingError("Recording produced no audio frames")
+
+        frames = write_wav(
+            output_path=self.path,
+            chunks=self._chunks,
+            sample_rate_hz=self.sample_rate_hz,
+            channels=self.channels,
+        )
+
+        if self._overflowed:
+            raise RecordingError("Recording completed with input overflow")
+
+        return RecordingResult(
+            path=self.path.resolve(),
+            duration_seconds=frames / self.sample_rate_hz,
+            sample_rate_hz=self.sample_rate_hz,
+            channels=self.channels,
+            frames=frames,
+        )
+
+    def cancel(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        try:
+            self._close_stream()
+        except RecordingError:
+            pass
+
+    def _read_loop(self) -> None:
+        stream = self._stream
+        if stream is None:
+            self._error = RecordingError("Recording stream was not opened")
+            return
+
+        while not self._stop_event.is_set():
+            try:
+                data, did_overflow = stream.read(self.blocksize)
+                self._chunks.append(_buffer_bytes(data))
+                self._overflowed = self._overflowed or did_overflow
+            except Exception as exc:
+                self._error = RecordingError(f"Failed while recording audio: {exc}")
+                return
+
+    def _close_stream(self) -> None:
+        context = self._context
+        if context is None:
+            return
+        try:
+            context.__exit__(None, None, None)
+        except Exception as exc:
+            raise RecordingError(f"Failed to close audio recording: {exc}") from exc
+        finally:
+            self._context = None
+            self._stream = None
 
 
 def default_recording_path() -> Path:
@@ -170,8 +295,7 @@ def _sounddevice() -> _SoundDevice:
         module = importlib.import_module("sounddevice")
     except ImportError as exc:
         raise RecordingError(
-            "Missing recording dependency. Run with `uv run --extra recording ...` "
-            "or `uv sync --extra recording`."
+            "Missing recording dependency. Run `uv sync` in the ASR directory."
         ) from exc
     return cast(_SoundDevice, module)
 

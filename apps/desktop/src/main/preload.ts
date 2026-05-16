@@ -1,19 +1,10 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type {
-  DictationStartedEvent,
-  DictationStoppedEvent,
-  ErrorEvent,
-  Event,
-  StatusEvent,
-  TranscriptFinalEvent,
-  TranscriptPartialEvent,
-  UserSettings,
-} from '../shared/types';
+const electron = require('electron') as typeof import('electron');
+const { contextBridge, ipcRenderer } = electron;
 
 type Unsubscribe = () => void;
 
-function onChannel<T>(channel: string, callback: (data: T) => void): Unsubscribe {
-  const listener = (_event: IpcRendererEvent, data: T) => callback(data);
+function onChannel(channel: string, callback: (data: unknown) => void): Unsubscribe {
+  const listener = (_event: unknown, data: unknown) => callback(data);
   ipcRenderer.on(channel, listener);
   return () => ipcRenderer.removeListener(channel, listener);
 }
@@ -28,19 +19,20 @@ contextBridge.exposeInMainWorld('api', {
   startDictation: () => ipcRenderer.invoke('dictation:start'),
   stopDictation: () => ipcRenderer.invoke('dictation:stop'),
   getStatus: () => ipcRenderer.invoke('status:get'),
-  updateSettings: (settings: UserSettings) => ipcRenderer.invoke('settings:update', settings),
+  updateSettings: (settings: unknown) => ipcRenderer.invoke('settings:update', settings),
   healthCheck: () => ipcRenderer.invoke('health-check'),
 
-  onTranscript: (callback: (data: Event) => void) => onChannel('asr:event', callback),
-  onTranscriptPartial: (callback: (data: TranscriptPartialEvent) => void) =>
+  onTranscript: (callback: (data: unknown) => void) => onChannel('asr:event', callback),
+  onTranscriptPartial: (callback: (data: unknown) => void) =>
     onChannel('transcript:partial', callback),
-  onTranscriptFinal: (callback: (data: TranscriptFinalEvent) => void) =>
+  onTranscriptFinal: (callback: (data: unknown) => void) =>
     onChannel('transcript:final', callback),
-  onDictationStarted: (callback: (data: DictationStartedEvent) => void) =>
+  onDictationStarted: (callback: (data: unknown) => void) =>
     onChannel('dictation:started', callback),
-  onDictationStopped: (callback: (data: DictationStoppedEvent) => void) =>
+  onDictationStopped: (callback: (data: unknown) => void) =>
     onChannel('dictation:stopped', callback),
-  onStatusUpdate: (callback: (data: StatusEvent) => void) => onChannel('status:update', callback),
-  onError: (callback: (data: ErrorEvent) => void) => onChannel('error:received', callback),
+  onStatusUpdate: (callback: (data: unknown) => void) => onChannel('status:update', callback),
+  onError: (callback: (data: unknown) => void) => onChannel('error:received', callback),
   onDisconnected: (callback: () => void) => onSignal('rust:disconnected', callback),
+  onHotkeyToggle: (callback: () => void) => onSignal('hotkey:toggle-dictation', callback),
 });

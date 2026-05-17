@@ -112,3 +112,28 @@ export type Event =
   | TranscriptFinalEvent
   | StatusEvent
   | ErrorEvent;
+
+// ─── App-level settings & history (Electron <-> renderer) ───
+
+export type AsrModel = 'base_en_q8' | 'medium_en_q8';
+export type AsrDevice = 'auto' | 'cpu' | 'gpu';
+
+export interface AppSettings {
+  /** whisper.cpp model key passed to the ASR worker. */
+  model: AsrModel;
+  /** Compute device preference for transcription. */
+  device: AsrDevice;
+  /** Start OpenWhisper automatically when the user signs in. */
+  launchAtLogin: boolean;
+  /** Open the main window on launch (vs. starting only in the tray). */
+  showWindowOnLaunch: boolean;
+}
+
+export interface HistoryItem {
+  id: string;
+  text: string;
+  language: string | null;
+  latencyMs: number | null;
+  /** Epoch milliseconds. */
+  createdAt: number;
+}

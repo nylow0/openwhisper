@@ -1,29 +1,50 @@
-import { app, BrowserWindow, Menu, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Tray } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, type ChildProcess } from 'child_process';
 import { fileURLToPath } from 'url';
-import { connectToRust, setMainWindow, setOverlayWindow, setupIpcHandlers } from './ipc.js';
+import {
+  connectToRust,
+  disconnectRust,
+  setMainWindow,
+  setOverlayWindow,
+  setupIpcHandlers,
+} from './ipc.js';
 import { createAppIcon } from './tray-icon.js';
+import { loadJson, saveJson } from './store.js';
+import type { AppSettings } from '../shared/types';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const SETTINGS_FILE = 'settings.json';
+const DEFAULT_SETTINGS: AppSettings = {
+  model: 'medium_en_q8',
+  device: 'auto',
+  launchAtLogin: false,
+  showWindowOnLaunch: true,
+};
 
 let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let rustProcess: ChildProcess | null = null;
 let isQuitting = false;
+let settings: AppSettings = DEFAULT_SETTINGS;
+
+function loadSettings(): AppSettings {
+  return { ...DEFAULT_SETTINGS, ...loadJson<Partial<AppSettings>>(SETTINGS_FILE, {}) };
+}
 
 function createMainWindow(): void {
   // The app ships its own integrated title bar — no native menu chrome.
   Menu.setApplicationMenu(null);
 
   mainWindow = new BrowserWindow({
-    width: 760,
-    height: 820,
-    minWidth: 560,
-    minHeight: 620,
+    width: 880,
+    height: 720,
+    minWidth: 720,
+    minHeight: 560,
     show: false,
     backgroundColor: '#09090b',
     autoHideMenuBar: true,
@@ -168,6 +189,15 @@ function findProjectRoot(): string {
   throw new Error('Could not find OpenWhisper project root from packaged app location');
 }
 
+/** Environment for the Rust helper — carries ASR model/device down to Python. */
+function rustEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    OPENWHISPER_ASR_MODEL: settings.model,
+    OPENWHISPER_ASR_DEVICE: settings.device,
+  };
+}
+
 function startRustHelper(): Promise<string> {
   return new Promise((resolve, reject) => {
     const electronPid = process.pid;
@@ -206,11 +236,17 @@ function startRustHelper(): Promise<string> {
       ? spawn(binaryPath, ['--pipe-pid', String(electronPid)], {
           cwd: projectRoot,
           stdio: ['ignore', 'pipe', 'pipe'],
+          env: rustEnv(),
         })
-      : spawn('cargo', ['run', '--target', 'x86_64-pc-windows-msvc', '--', '--pipe-pid', String(electronPid)], {
-          cwd: rustCwd,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
+      : spawn(
+          'cargo',
+          ['run', '--target', 'x86_64-pc-windows-msvc', '--', '--pipe-pid', String(electronPid)],
+          {
+            cwd: rustCwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: rustEnv(),
+          }
+        );
 
     const handleOutput = (prefix: string, data: Buffer): void => {
       const text = data.toString('utf-8').trim();
@@ -238,28 +274,78 @@ function startRustHelper(): Promise<string> {
   });
 }
 
-app.whenReady().then(async () => {
-  createMainWindow();
-  createOverlayWindow();
-  createTray();
-  setupIpcHandlers();
-
+/** Restarts the Rust helper + Python worker so settings changes take effect. */
+async function restartEngine(): Promise<{ ok: boolean; error?: string }> {
+  disconnectRust();
+  rustProcess?.kill();
+  rustProcess = null;
+  await new Promise((resolve) => setTimeout(resolve, 500));
   try {
     const pipeName = await startRustHelper();
     await connectToRust(pipeName);
-    console.log('[Main] Connected to Rust helper');
+    return { ok: true };
   } catch (err) {
-    console.error('[Main] Failed to start/connect to Rust helper:', err);
+    console.error('[Main] Failed to restart engine:', err);
+    return { ok: false, error: (err as Error).message };
   }
+}
 
-  await Promise.all([loadMainWindow(), loadOverlayWindow()]);
-});
+function registerAppIpc(): void {
+  ipcMain.handle('settings:read', () => settings);
 
-// Tray application — keep running even when every window is closed.
-app.on('window-all-closed', () => {});
+  ipcMain.handle('settings:write', (_event, partial: Partial<AppSettings>) => {
+    settings = { ...settings, ...partial };
+    saveJson(SETTINGS_FILE, settings);
+    if ('launchAtLogin' in partial) {
+      app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
+    }
+    return settings;
+  });
 
-app.on('before-quit', () => {
-  isQuitting = true;
-  rustProcess?.kill();
-  tray?.destroy();
-});
+  ipcMain.handle('engine:restart', () => restartEngine());
+}
+
+function bootstrap(): void {
+  app.on('second-instance', () => showMainWindow());
+
+  app.whenReady().then(async () => {
+    settings = loadSettings();
+    app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
+
+    createMainWindow();
+    createOverlayWindow();
+    createTray();
+    setupIpcHandlers();
+    registerAppIpc();
+
+    try {
+      const pipeName = await startRustHelper();
+      await connectToRust(pipeName);
+      console.log('[Main] Connected to Rust helper');
+    } catch (err) {
+      console.error('[Main] Failed to start/connect to Rust helper:', err);
+    }
+
+    await Promise.all([loadMainWindow(), loadOverlayWindow()]);
+    if (settings.showWindowOnLaunch) {
+      mainWindow?.show();
+    }
+  });
+
+  // Tray application — keep running even when every window is closed.
+  app.on('window-all-closed', () => {});
+
+  app.on('before-quit', () => {
+    isQuitting = true;
+    rustProcess?.kill();
+    tray?.destroy();
+  });
+}
+
+// Single-instance: a second launch focuses the existing window instead of
+// starting another tray icon.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  bootstrap();
+}

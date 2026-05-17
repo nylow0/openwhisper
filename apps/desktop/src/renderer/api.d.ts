@@ -1,8 +1,10 @@
 import type {
+  AppSettings,
   DictationStartedEvent,
   DictationStoppedEvent,
   ErrorEvent,
   Event,
+  HistoryItem,
   StatusEvent,
   TranscriptFinalEvent,
   TranscriptPartialEvent,
@@ -17,6 +19,11 @@ export interface HealthCheckResult {
   isDictating: boolean;
   isModelLoaded: boolean;
   workerHealthy: boolean;
+}
+
+export interface RestartEngineResult {
+  ok: boolean;
+  error?: string;
 }
 
 declare global {
@@ -36,6 +43,15 @@ declare global {
     onError: (callback: (data: ErrorEvent) => void) => () => void;
     onDisconnected: (callback: () => void) => () => void;
     onHotkeyToggle: (callback: () => void) => () => void;
+
+    getSettings: () => Promise<AppSettings>;
+    saveSettings: (partial: Partial<AppSettings>) => Promise<AppSettings>;
+    restartEngine: () => Promise<RestartEngineResult>;
+
+    getHistory: () => Promise<HistoryItem[]>;
+    clearHistory: () => Promise<void>;
+    deleteHistoryItem: (id: string) => Promise<void>;
+    onHistoryChanged: (callback: (items: HistoryItem[]) => void) => () => void;
   }
 
   interface Window {

@@ -107,6 +107,13 @@ async fn main() -> Result<()> {
     // Main bridge loop
     let state_clone = state.clone();
     let bridge_handle = tokio::spawn(async move {
+        // A genuine push-to-talk hold easily outlasts this debounce window;
+        // brief stray bursts (e.g. a laptop Fn+F10 trackpad toggle that the
+        // hook momentarily reads as Ctrl+Win) do not, so they never dictate.
+        let press_timer = tokio::time::sleep(std::time::Duration::from_secs(86_400));
+        tokio::pin!(press_timer);
+        let mut awaiting_hold = false;
+
         loop {
             tokio::select! {
                 Some(cmd) = ipc_cmd_rx.recv() => {
@@ -169,23 +176,18 @@ async fn main() -> Result<()> {
                 Some(hotkey_event) = hotkey_rx.recv() => {
                     match hotkey_event {
                         HotkeyEvent::Pressed => {
-                            let mut s = state_clone.write().await;
-                            if !s.is_dictating {
-                                log::info!("Hotkey held — starting dictation");
-                                s.is_dictating = true;
-                                drop(s);
-                                let _ = ipc_event_tx.send(IpcEvent::DictationStarted {
-                                    timestamp: unix_secs(),
-                                }).await;
-                                if let Err(e) = python_worker.send(ToPython::DictationStart {
-                                    language: None,
-                                    chunk_duration_ms: 2_000,
-                                }).await {
-                                    log::error!("Failed to send dictation.start to Python: {}", e);
-                                }
+                            // Arm the debounce timer; dictation only starts if
+                            // the combo is still held when it elapses.
+                            if !state_clone.read().await.is_dictating {
+                                awaiting_hold = true;
+                                press_timer.as_mut().reset(
+                                    tokio::time::Instant::now()
+                                        + std::time::Duration::from_millis(120),
+                                );
                             }
                         }
                         HotkeyEvent::Released => {
+                            awaiting_hold = false;
                             let mut s = state_clone.write().await;
                             if s.is_dictating {
                                 log::info!("Hotkey released — stopping dictation");
@@ -198,6 +200,24 @@ async fn main() -> Result<()> {
                                     timestamp: unix_secs(),
                                 }).await;
                             }
+                        }
+                    }
+                }
+                () = &mut press_timer, if awaiting_hold => {
+                    awaiting_hold = false;
+                    let mut s = state_clone.write().await;
+                    if !s.is_dictating {
+                        log::info!("Hotkey held — starting dictation");
+                        s.is_dictating = true;
+                        drop(s);
+                        let _ = ipc_event_tx.send(IpcEvent::DictationStarted {
+                            timestamp: unix_secs(),
+                        }).await;
+                        if let Err(e) = python_worker.send(ToPython::DictationStart {
+                            language: None,
+                            chunk_duration_ms: 2_000,
+                        }).await {
+                            log::error!("Failed to send dictation.start to Python: {}", e);
                         }
                     }
                 }

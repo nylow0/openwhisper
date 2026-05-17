@@ -35,4 +35,13 @@ contextBridge.exposeInMainWorld('api', {
   onError: (callback: (data: unknown) => void) => onChannel('error:received', callback),
   onDisconnected: (callback: () => void) => onSignal('rust:disconnected', callback),
   onHotkeyToggle: (callback: () => void) => onSignal('hotkey:toggle-dictation', callback),
+
+  getSettings: () => ipcRenderer.invoke('settings:read'),
+  saveSettings: (partial: unknown) => ipcRenderer.invoke('settings:write', partial),
+  restartEngine: () => ipcRenderer.invoke('engine:restart'),
+
+  getHistory: () => ipcRenderer.invoke('history:get'),
+  clearHistory: () => ipcRenderer.invoke('history:clear'),
+  deleteHistoryItem: (id: unknown) => ipcRenderer.invoke('history:delete', id),
+  onHistoryChanged: (callback: (data: unknown) => void) => onChannel('history:changed', callback),
 });

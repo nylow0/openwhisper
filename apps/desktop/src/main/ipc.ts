@@ -1,7 +1,15 @@
 import { BrowserWindow, ipcMain, screen, type IpcMainInvokeEvent } from 'electron';
 import * as net from 'net';
 import { EventEmitter } from 'events';
-import type { Command, Event, StatusEvent, UserSettings } from '../shared/types';
+import type {
+  Command,
+  Event,
+  HistoryItem,
+  StatusEvent,
+  TranscriptFinalEvent,
+  UserSettings,
+} from '../shared/types';
+import { loadJson, saveJson } from './store.js';
 
 type PendingRequest = {
   resolve: (value: Event) => void;
@@ -177,6 +185,28 @@ function scheduleOverlayHide(delayMs: number): void {
   }, delayMs);
 }
 
+// ── Transcript history ─────────────────────────────────────────────────────
+
+const HISTORY_FILE = 'history.json';
+const HISTORY_LIMIT = 500;
+let history: HistoryItem[] = [];
+
+/** Appends a finished transcript to the persisted history and notifies the UI. */
+function recordTranscript(event: TranscriptFinalEvent): void {
+  const text = event.text.trim();
+  if (!text) return;
+  const item: HistoryItem = {
+    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    text,
+    language: event.language ?? null,
+    latencyMs: event.processingLatencyMs ?? null,
+    createdAt: Date.now(),
+  };
+  history = [item, ...history].slice(0, HISTORY_LIMIT);
+  saveJson(HISTORY_FILE, history);
+  broadcast('history:changed', history);
+}
+
 export async function connectToRust(pipeName: string): Promise<void> {
   rustClient = new RustClient();
 
@@ -196,6 +226,7 @@ export async function connectToRust(pipeName: string): Promise<void> {
         break;
       case 'transcript.final':
         broadcast('transcript:final', event);
+        recordTranscript(event);
         scheduleOverlayHide(2_600);
         break;
       case 'status':
@@ -216,7 +247,14 @@ export async function connectToRust(pipeName: string): Promise<void> {
   await rustClient.connect(pipeName);
 }
 
+export function disconnectRust(): void {
+  rustClient?.disconnect();
+  rustClient = null;
+}
+
 export function setupIpcHandlers(): void {
+  history = loadJson<HistoryItem[]>(HISTORY_FILE, []);
+
   ipcMain.handle('dictation:start', async () => {
     if (!rustClient) throw new Error('Rust not connected');
     rustClient.send({ type: 'dictation.start' });
@@ -249,6 +287,20 @@ export function setupIpcHandlers(): void {
       isModelLoaded: status.isModelLoaded,
       workerHealthy: status.workerHealthy,
     };
+  });
+
+  ipcMain.handle('history:get', () => history);
+
+  ipcMain.handle('history:clear', () => {
+    history = [];
+    saveJson(HISTORY_FILE, history);
+    broadcast('history:changed', history);
+  });
+
+  ipcMain.handle('history:delete', (_event: IpcMainInvokeEvent, id: string) => {
+    history = history.filter((item) => item.id !== id);
+    saveJson(HISTORY_FILE, history);
+    broadcast('history:changed', history);
   });
 }
 

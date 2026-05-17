@@ -4,11 +4,14 @@ use anyhow::Result;
 use tokio::sync::RwLock;
 use tokio::signal;
 
+mod hotkey;
+mod inject;
 mod ipc;
 mod ipc_protocol;
 mod protocol;
 mod python;
 
+use hotkey::HotkeyEvent;
 use ipc::IpcServer;
 use ipc_protocol::{IpcCommand, IpcEvent};
 use protocol::{FromPython, PythonSettings, ToPython};
@@ -51,6 +54,13 @@ fn python_settings_from_ipc(settings: Option<&serde_json::Value>) -> PythonSetti
     }
 }
 
+fn unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -89,6 +99,10 @@ async fn main() -> Result<()> {
         is_model_loaded: false,
         worker_healthy: true,
     }));
+
+    // Global hold-to-dictate hotkey (Ctrl + Win), via a low-level keyboard
+    // hook so we receive key-up events and can swallow the Win key.
+    let mut hotkey_rx = hotkey::spawn_listener();
 
     // Main bridge loop
     let state_clone = state.clone();
@@ -152,6 +166,41 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+                Some(hotkey_event) = hotkey_rx.recv() => {
+                    match hotkey_event {
+                        HotkeyEvent::Pressed => {
+                            let mut s = state_clone.write().await;
+                            if !s.is_dictating {
+                                log::info!("Hotkey held — starting dictation");
+                                s.is_dictating = true;
+                                drop(s);
+                                let _ = ipc_event_tx.send(IpcEvent::DictationStarted {
+                                    timestamp: unix_secs(),
+                                }).await;
+                                if let Err(e) = python_worker.send(ToPython::DictationStart {
+                                    language: None,
+                                    chunk_duration_ms: 2_000,
+                                }).await {
+                                    log::error!("Failed to send dictation.start to Python: {}", e);
+                                }
+                            }
+                        }
+                        HotkeyEvent::Released => {
+                            let mut s = state_clone.write().await;
+                            if s.is_dictating {
+                                log::info!("Hotkey released — stopping dictation");
+                                s.is_dictating = false;
+                                drop(s);
+                                if let Err(e) = python_worker.send(ToPython::DictationStop).await {
+                                    log::error!("Failed to send dictation.stop to Python: {}", e);
+                                }
+                                let _ = ipc_event_tx.send(IpcEvent::DictationStopped {
+                                    timestamp: unix_secs(),
+                                }).await;
+                            }
+                        }
+                    }
+                }
                 Some(event) = python_worker.recv() => {
                     match event {
                         FromPython::HealthOk { timestamp, status } => {
@@ -182,6 +231,10 @@ async fn main() -> Result<()> {
                             }).await;
                         }
                         FromPython::TranscriptFinal { text, words, language, processing_latency_ms } => {
+                            if !text.trim().is_empty() {
+                                let to_type = text.clone();
+                                tokio::task::spawn_blocking(move || inject::type_text(&to_type));
+                            }
                             let _ = ipc_event_tx.send(IpcEvent::TranscriptFinal {
                                 text,
                                 words,

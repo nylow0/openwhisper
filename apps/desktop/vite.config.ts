@@ -15,7 +15,15 @@ export default defineConfig({
   base: './',
   build: {
     outDir: 'dist/renderer',
-    emptyOutDir: true
+    emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        // Main history window.
+        main: path.resolve(__dirname, 'index.html'),
+        // Frameless recording overlay (HUD).
+        overlay: path.resolve(__dirname, 'overlay.html')
+      }
+    }
   },
   resolve: {
     alias: {

@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, ipcMain, screen, type IpcMainInvokeEvent } from 'electron';
 import * as net from 'net';
 import { EventEmitter } from 'events';
 import type { Command, Event, StatusEvent, UserSettings } from '../shared/types';
@@ -127,41 +127,90 @@ class RustClient extends EventEmitter {
 
 let rustClient: RustClient | null = null;
 let mainWindow: BrowserWindow | null = null;
+let overlayWindow: BrowserWindow | null = null;
+let overlayHideTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function setMainWindow(win: BrowserWindow): void {
   mainWindow = win;
+}
+
+export function setOverlayWindow(win: BrowserWindow): void {
+  overlayWindow = win;
+}
+
+/** Sends an event to every live renderer (main window + recording overlay). */
+function broadcast(channel: string, payload?: unknown): void {
+  for (const win of [mainWindow, overlayWindow]) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
+  }
+}
+
+/** Places the overlay pill centred near the bottom of the active display. */
+function positionOverlay(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const { workArea } = display;
+  const [width, height] = overlayWindow.getSize();
+  overlayWindow.setPosition(
+    Math.round(workArea.x + (workArea.width - width) / 2),
+    Math.round(workArea.y + workArea.height - height - 16)
+  );
+}
+
+function showOverlay(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  if (overlayHideTimer) {
+    clearTimeout(overlayHideTimer);
+    overlayHideTimer = null;
+  }
+  positionOverlay();
+  overlayWindow.showInactive();
+}
+
+function scheduleOverlayHide(delayMs: number): void {
+  if (overlayHideTimer) clearTimeout(overlayHideTimer);
+  overlayHideTimer = setTimeout(() => {
+    overlayHideTimer = null;
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide();
+  }, delayMs);
 }
 
 export async function connectToRust(pipeName: string): Promise<void> {
   rustClient = new RustClient();
 
   rustClient.on('event', (event: Event) => {
-    mainWindow?.webContents.send('asr:event', event);
+    broadcast('asr:event', event);
 
     switch (event.type) {
       case 'dictation.started':
-        mainWindow?.webContents.send('dictation:started', event);
+        showOverlay();
+        broadcast('dictation:started', event);
         break;
       case 'dictation.stopped':
-        mainWindow?.webContents.send('dictation:stopped', event);
+        broadcast('dictation:stopped', event);
         break;
       case 'transcript.partial':
-        mainWindow?.webContents.send('transcript:partial', event);
+        broadcast('transcript:partial', event);
         break;
       case 'transcript.final':
-        mainWindow?.webContents.send('transcript:final', event);
+        broadcast('transcript:final', event);
+        scheduleOverlayHide(2_600);
         break;
       case 'status':
-        mainWindow?.webContents.send('status:update', event);
+        broadcast('status:update', event);
         break;
       case 'error':
-        mainWindow?.webContents.send('error:received', event);
+        broadcast('error:received', event);
+        scheduleOverlayHide(4_000);
         break;
     }
   });
 
   rustClient.on('disconnected', () => {
-    mainWindow?.webContents.send('rust:disconnected');
+    broadcast('rust:disconnected');
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide();
   });
 
   await rustClient.connect(pipeName);

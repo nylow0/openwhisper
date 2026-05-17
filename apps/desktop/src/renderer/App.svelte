@@ -1,13 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import type {
-    DictationStartedEvent,
-    DictationStoppedEvent,
-    ErrorEvent,
-    StatusEvent,
-    TranscriptFinalEvent,
-    TranscriptPartialEvent,
-  } from '../shared/types';
+  import { fade, fly } from 'svelte/transition';
+  import { flip } from 'svelte/animate';
+  import type { ErrorEvent, TranscriptFinalEvent } from '../shared/types';
 
   type TranscriptItem = {
     id: number;
@@ -17,7 +12,7 @@
     createdAt: string;
   };
 
-  type ErrorItem = {
+  type Toast = {
     id: number;
     message: string;
     createdAt: string;
@@ -25,390 +20,292 @@
 
   const api = window.api;
 
-  let connectionStatus = 'Starting';
-  let bridgeReady = false;
-  let isDictating = false;
-  let isTranscribing = false;
-  let isModelLoaded = false;
-  let workerHealthy = false;
-  let currentPartial = '';
-  let statusMessage = 'Ready when the bridge connects.';
   let transcripts: TranscriptItem[] = [];
-  let errors: ErrorItem[] = [];
+  let toasts: Toast[] = [];
   let nextTranscriptId = 1;
-  let nextErrorId = 1;
+  let nextToastId = 1;
+  let copiedId: number | null = null;
+  let copiedResetTimer: ReturnType<typeof setTimeout> | undefined;
 
-  $: dictationPhase = isTranscribing ? 'Transcribing' : isDictating ? 'Listening' : 'Idle';
-  $: primaryAction = isDictating ? 'Stop Dictation' : isTranscribing ? 'Transcribing' : 'Start Dictation';
-  $: canStart = Boolean(api) && bridgeReady && !isDictating && !isTranscribing;
-  $: canStop = Boolean(api) && bridgeReady && isDictating && !isTranscribing;
-  $: latestTranscript = transcripts[0]?.text ?? '';
-  $: connectionTone = bridgeReady && workerHealthy ? 'Ready' : bridgeReady ? 'Degraded' : 'Offline';
-
-  let unsubTranscriptPartial: (() => void) | undefined;
   let unsubTranscriptFinal: (() => void) | undefined;
-  let unsubDictationStarted: (() => void) | undefined;
-  let unsubDictationStopped: (() => void) | undefined;
-  let unsubStatus: (() => void) | undefined;
   let unsubError: (() => void) | undefined;
   let unsubDisconnected: (() => void) | undefined;
-  let unsubHotkeyToggle: (() => void) | undefined;
 
-  onMount(async () => {
+  onMount(() => {
     if (!api) {
-      connectionStatus = 'Bridge unavailable';
-      statusMessage = 'Electron preload did not expose the native bridge.';
-      pushError('Electron preload API is unavailable. Rebuild and restart the packaged app.');
+      pushToast('Electron preload API is unavailable. Rebuild and restart the app.');
       return;
     }
-
-    unsubTranscriptPartial = api.onTranscriptPartial((data: TranscriptPartialEvent) => {
-      currentPartial = data.text;
-      statusMessage = 'Listening...';
-    });
 
     unsubTranscriptFinal = api.onTranscriptFinal((data: TranscriptFinalEvent) => {
       const text = data.text.trim();
-      currentPartial = '';
-      isTranscribing = false;
-      statusMessage = text ? 'Transcript ready.' : 'No speech was detected.';
-
-      if (text) {
-        transcripts = [
-          {
-            id: nextTranscriptId,
-            text,
-            language: data.language ?? null,
-            latencyMs: data.processingLatencyMs ?? null,
-            createdAt: shortTime(),
-          },
-          ...transcripts,
-        ];
-        nextTranscriptId += 1;
-      }
-    });
-
-    unsubDictationStarted = api.onDictationStarted((data: DictationStartedEvent) => {
-      isDictating = true;
-      isTranscribing = false;
-      statusMessage = `Recording started at ${formatUnixSeconds(data.timestamp)}.`;
-    });
-
-    unsubDictationStopped = api.onDictationStopped((data: DictationStoppedEvent) => {
-      isDictating = false;
-      isTranscribing = true;
-      statusMessage = `Recording stopped at ${formatUnixSeconds(data.timestamp)}.`;
-    });
-
-    unsubStatus = api.onStatusUpdate((data: StatusEvent) => {
-      applyStatus(data);
+      if (!text) return;
+      transcripts = [
+        {
+          id: nextTranscriptId,
+          text,
+          language: data.language ?? null,
+          latencyMs: data.processingLatencyMs ?? null,
+          createdAt: shortTime(),
+        },
+        ...transcripts,
+      ];
+      nextTranscriptId += 1;
     });
 
     unsubError = api.onError((data: ErrorEvent) => {
-      isDictating = false;
-      isTranscribing = false;
-      pushError(`[${data.code}] ${data.message}`);
+      pushToast(`[${data.code}] ${data.message}`);
     });
 
     unsubDisconnected = api.onDisconnected(() => {
-      bridgeReady = false;
-      workerHealthy = false;
-      isDictating = false;
-      isTranscribing = false;
-      connectionStatus = 'Disconnected';
-      statusMessage = 'Native bridge disconnected.';
+      pushToast('Lost connection to the native bridge.');
     });
-
-    unsubHotkeyToggle = api.onHotkeyToggle(() => {
-      void toggleDictation();
-    });
-
-    await loadInitialStatus();
   });
 
   onDestroy(() => {
-    unsubTranscriptPartial?.();
     unsubTranscriptFinal?.();
-    unsubDictationStarted?.();
-    unsubDictationStopped?.();
-    unsubStatus?.();
     unsubError?.();
     unsubDisconnected?.();
-    unsubHotkeyToggle?.();
+    if (copiedResetTimer) clearTimeout(copiedResetTimer);
   });
 
-  async function startDictation() {
-    if (!api || !canStart) return;
+  async function copyTranscript(item: TranscriptItem) {
     try {
-      currentPartial = '';
-      isTranscribing = false;
-      statusMessage = 'Starting recording...';
-      await api.startDictation();
-      isDictating = true;
+      await navigator.clipboard.writeText(item.text);
+      copiedId = item.id;
+      if (copiedResetTimer) clearTimeout(copiedResetTimer);
+      copiedResetTimer = setTimeout(() => {
+        copiedId = null;
+      }, 1500);
     } catch (e) {
-      pushError('Failed to start dictation: ' + (e as Error).message);
-    }
-  }
-
-  async function stopDictation() {
-    if (!api || !canStop) return;
-    try {
-      statusMessage = 'Stopping recording...';
-      await api.stopDictation();
-      isDictating = false;
-      isTranscribing = true;
-      currentPartial = '';
-    } catch (e) {
-      isTranscribing = false;
-      pushError('Failed to stop dictation: ' + (e as Error).message);
-    }
-  }
-
-  async function toggleDictation() {
-    if (isTranscribing) return;
-    if (isDictating) {
-      await stopDictation();
-      return;
-    }
-    await startDictation();
-  }
-
-  async function copyLatestTranscript() {
-    if (!latestTranscript) return;
-    try {
-      await navigator.clipboard.writeText(latestTranscript);
-      statusMessage = 'Latest transcript copied.';
-    } catch (e) {
-      pushError('Failed to copy transcript: ' + (e as Error).message);
+      pushToast('Failed to copy transcript: ' + (e as Error).message);
     }
   }
 
   function clearTranscripts() {
     transcripts = [];
-    currentPartial = '';
-    statusMessage = 'Transcript history cleared.';
   }
 
-  function clearErrors() {
-    errors = [];
+  function pushToast(message: string) {
+    const id = nextToastId;
+    nextToastId += 1;
+    toasts = [{ id, message, createdAt: shortTime() }, ...toasts].slice(0, 4);
+    setTimeout(() => dismissToast(id), 6000);
   }
 
-  async function loadInitialStatus() {
-    if (!api) return;
-
-    for (let attempt = 1; attempt <= 10; attempt += 1) {
-      try {
-        const status = await api.getStatus();
-        applyStatus(status);
-        statusMessage = 'Bridge connected.';
-        return;
-      } catch (e) {
-        if (attempt === 10) {
-          connectionStatus = 'Connection error';
-          pushError('Failed to get native status: ' + (e as Error).message);
-          return;
-        }
-        await sleep(500);
-      }
-    }
-  }
-
-  async function refreshHealth() {
-    if (!api) return;
-    try {
-      const result = await api.healthCheck();
-      bridgeReady = true;
-      workerHealthy = result.workerHealthy;
-      isDictating = result.isDictating;
-      isModelLoaded = result.isModelLoaded;
-      connectionStatus = result.workerHealthy ? 'Connected' : 'Degraded';
-      statusMessage = `Health checked at ${new Date(result.timestamp).toLocaleTimeString()}.`;
-    } catch (e) {
-      connectionStatus = 'Connection error';
-      pushError('Health check failed: ' + (e as Error).message);
-    }
-  }
-
-  function applyStatus(status: StatusEvent) {
-    bridgeReady = true;
-    connectionStatus = status.workerHealthy ? 'Connected' : 'Degraded';
-    isDictating = status.isDictating;
-    isModelLoaded = status.isModelLoaded;
-    workerHealthy = status.workerHealthy;
-  }
-
-  function pushError(message: string) {
-    errors = [{ id: nextErrorId, message, createdAt: shortTime() }, ...errors];
-    nextErrorId += 1;
-    statusMessage = 'Action needs attention.';
+  function dismissToast(id: number) {
+    toasts = toasts.filter((toast) => toast.id !== id);
   }
 
   function shortTime() {
     return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
-
-  function formatUnixSeconds(seconds: number) {
-    return new Date(seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-
-  function sleep(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
 </script>
 
-<main class="min-h-screen bg-zinc-50 text-zinc-950">
-  <div class="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-5 px-6 py-6">
-    <header class="flex flex-col gap-4 border-b border-zinc-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <h1 class="text-3xl font-semibold tracking-normal">OpenWhisper</h1>
-        <p class="mt-1 text-sm text-zinc-600">Windows-first offline dictation</p>
+<div class="flex h-screen flex-col overflow-hidden bg-zinc-950 text-zinc-100">
+  <!-- Title bar — draggable, integrated, native window controls overlaid at right -->
+  <header
+    class="drag flex h-11 shrink-0 select-none items-center gap-2.5 border-b border-zinc-800/80 bg-zinc-950 px-4"
+  >
+    <div class="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-500/15 text-indigo-400">
+      <svg viewBox="0 0 24 24" fill="none" class="h-3.5 w-3.5" aria-hidden="true">
+        <circle cx="12" cy="12" r="2.4" fill="currentColor" />
+        <path d="M7.5 7.5a6.4 6.4 0 0 0 0 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        <path d="M16.5 7.5a6.4 6.4 0 0 1 0 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        <path d="M4.4 4.4a10.6 10.6 0 0 0 0 15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity="0.45" />
+        <path d="M19.6 4.4a10.6 10.6 0 0 1 0 15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity="0.45" />
+      </svg>
+    </div>
+    <span class="text-[13px] font-semibold tracking-tight text-zinc-100">OpenWhisper</span>
+    <span class="text-zinc-700">·</span>
+    <span class="text-[12px] font-medium text-zinc-500">Offline dictation</span>
+  </header>
+
+  <!-- Main content -->
+  <main class="mx-auto flex w-full max-w-2xl min-h-0 flex-1 flex-col px-6">
+    <!-- How-to-dictate hint -->
+    <section
+      class="mt-6 flex shrink-0 items-center gap-3.5 rounded-2xl border border-zinc-800 bg-gradient-to-br from-zinc-900 to-zinc-900/30 p-4"
+    >
+      <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-400">
+        <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" aria-hidden="true">
+          <circle cx="12" cy="12" r="2.6" fill="currentColor" />
+          <path d="M7.5 7.5a6.4 6.4 0 0 0 0 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          <path d="M16.5 7.5a6.4 6.4 0 0 1 0 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          <path d="M4.4 4.4a10.6 10.6 0 0 0 0 15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity="0.45" />
+          <path d="M19.6 4.4a10.6 10.6 0 0 1 0 15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity="0.45" />
+        </svg>
       </div>
-      <div class="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-        <div class="min-w-28 rounded border border-zinc-200 bg-white px-3 py-2">
-          <p class="text-xs font-medium text-zinc-500">Bridge</p>
-          <p class="mt-1 font-semibold" class:text-emerald-700={bridgeReady} class:text-rose-700={!bridgeReady}>
-            {connectionStatus}
-          </p>
+      <div class="min-w-0">
+        <div class="flex items-center gap-1.5">
+          <span class="text-[13px] font-semibold text-zinc-100">Hold</span>
+          <kbd class="rounded-md border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">Ctrl</kbd>
+          <span class="text-[10px] text-zinc-600">+</span>
+          <kbd class="rounded-md border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">Win</kbd>
+          <span class="text-[13px] font-semibold text-zinc-100">to dictate</span>
         </div>
-        <div class="min-w-28 rounded border border-zinc-200 bg-white px-3 py-2">
-          <p class="text-xs font-medium text-zinc-500">Worker</p>
-          <p class="mt-1 font-semibold" class:text-emerald-700={workerHealthy} class:text-rose-700={!workerHealthy}>
-            {connectionTone}
-          </p>
-        </div>
-        <div class="min-w-28 rounded border border-zinc-200 bg-white px-3 py-2">
-          <p class="text-xs font-medium text-zinc-500">Dictation</p>
-          <p class="mt-1 font-semibold" class:text-emerald-700={isDictating} class:text-blue-700={isTranscribing}>
-            {dictationPhase}
-          </p>
-        </div>
-        <div class="min-w-28 rounded border border-zinc-200 bg-white px-3 py-2">
-          <p class="text-xs font-medium text-zinc-500">Model</p>
-          <p class="mt-1 font-semibold" class:text-emerald-700={isModelLoaded} class:text-zinc-500={!isModelLoaded}>
-            {isModelLoaded ? 'Loaded' : 'Pending'}
-          </p>
-        </div>
-      </div>
-    </header>
-
-    <section class="grid gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
-      <div class="rounded border border-zinc-200 bg-white p-5">
-        <div class="flex items-start justify-between gap-4">
-          <div>
-            <h2 class="text-lg font-semibold">Dictation</h2>
-            <p class="mt-1 text-sm text-zinc-600">{statusMessage}</p>
-          </div>
-          <span
-            class="mt-1 h-3 w-3 shrink-0 rounded-full"
-            class:bg-emerald-500={isDictating}
-            class:bg-blue-500={isTranscribing}
-            class:bg-zinc-300={!isDictating && !isTranscribing}
-          ></span>
-        </div>
-
-        <button
-          class="mt-6 h-14 w-full rounded bg-zinc-950 px-5 text-base font-semibold text-white transition hover:bg-zinc-800 disabled:bg-zinc-300 disabled:text-zinc-600"
-          on:click={isDictating ? stopDictation : startDictation}
-          disabled={isDictating ? !canStop : !canStart}
-        >
-          {primaryAction}
-        </button>
-
-        <div class="mt-3 grid grid-cols-2 gap-3">
-          <button
-            class="h-10 rounded border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-800 hover:bg-zinc-100 disabled:text-zinc-400"
-            on:click={refreshHealth}
-            disabled={!api}
-          >
-            Refresh
-          </button>
-          <button
-            class="h-10 rounded border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-800 hover:bg-zinc-100 disabled:text-zinc-400"
-            on:click={copyLatestTranscript}
-            disabled={!latestTranscript}
-          >
-            Copy Latest
-          </button>
-        </div>
-
-        {#if currentPartial}
-          <div class="mt-5 border-t border-zinc-200 pt-4">
-            <p class="text-xs font-medium uppercase text-zinc-500">Live</p>
-            <p class="mt-2 text-sm leading-6 text-zinc-700">{currentPartial}</p>
-          </div>
-        {/if}
-      </div>
-
-      <div class="rounded border border-zinc-200 bg-white p-5">
-        <div class="flex items-center justify-between gap-3">
-          <div>
-            <h2 class="text-lg font-semibold">Transcript</h2>
-            <p class="mt-1 text-sm text-zinc-600">
-              {transcripts.length === 0 ? 'No transcript yet.' : `${transcripts.length} item${transcripts.length === 1 ? '' : 's'}`}
-            </p>
-          </div>
-          <button
-            class="h-9 rounded border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-800 hover:bg-zinc-100 disabled:text-zinc-400"
-            on:click={clearTranscripts}
-            disabled={transcripts.length === 0 && !currentPartial}
-          >
-            Clear
-          </button>
-        </div>
-
-        <div class="mt-5 min-h-64">
-          {#if isTranscribing}
-            <p class="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">Transcribing audio...</p>
-          {/if}
-
-          {#if transcripts.length === 0 && !currentPartial && !isTranscribing}
-            <div class="flex min-h-52 items-center justify-center rounded border border-dashed border-zinc-300 text-sm text-zinc-500">
-              Start dictation to create a transcript.
-            </div>
-          {/if}
-
-          {#if transcripts.length > 0}
-            <div class="divide-y divide-zinc-200">
-              {#each transcripts as transcript}
-                <article class="py-4 first:pt-0 last:pb-0">
-                  <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
-                    <span>{transcript.createdAt}</span>
-                    {#if transcript.language}
-                      <span>{transcript.language}</span>
-                    {/if}
-                    {#if transcript.latencyMs !== null}
-                      <span>{transcript.latencyMs} ms</span>
-                    {/if}
-                  </div>
-                  <p class="whitespace-pre-wrap text-base leading-7 text-zinc-900">{transcript.text}</p>
-                </article>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <p class="mt-1 text-[12px] leading-snug text-zinc-500">
+          Speak while holding the keys, then release — your words are typed straight into whatever
+          app you're using.
+        </p>
       </div>
     </section>
 
-    {#if errors.length > 0}
-      <section class="rounded border border-rose-200 bg-rose-50 p-5">
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="text-lg font-semibold text-rose-800">Errors</h2>
-          <button
-            class="h-9 rounded border border-rose-300 bg-white px-3 text-sm font-medium text-rose-800 hover:bg-rose-100"
-            on:click={clearErrors}
-          >
-            Clear
-          </button>
-        </div>
-        <div class="mt-3 divide-y divide-rose-200">
-          {#each errors as error}
-            <p class="py-2 text-sm leading-6 text-rose-700">
-              <span class="font-medium">{error.createdAt}</span>
-              <span class="ml-2">{error.message}</span>
+    <!-- History header -->
+    <div class="flex shrink-0 items-center justify-between gap-3 pb-2.5 pt-6">
+      <div class="flex items-center gap-2">
+        <h2 class="text-[13px] font-semibold text-zinc-300">History</h2>
+        {#if transcripts.length > 0}
+          <span class="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400">
+            {transcripts.length}
+          </span>
+        {/if}
+      </div>
+      <button
+        type="button"
+        class="rounded-lg px-2 py-1 text-[12px] font-medium text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200 disabled:pointer-events-none disabled:opacity-40"
+        on:click={clearTranscripts}
+        disabled={transcripts.length === 0}
+      >
+        Clear
+      </button>
+    </div>
+
+    <!-- Transcript list -->
+    <div class="scroll-area min-h-0 flex-1 space-y-2 overflow-y-auto pb-5 pr-1">
+      {#if transcripts.length === 0}
+        <div class="flex min-h-[220px] flex-col items-center justify-center gap-3 text-center">
+          <div class="flex h-14 w-14 items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-900 text-zinc-700">
+            <svg viewBox="0 0 24 24" fill="none" class="h-6 w-6" aria-hidden="true">
+              <circle cx="12" cy="12" r="2.4" fill="currentColor" />
+              <path d="M7.5 7.5a6.4 6.4 0 0 0 0 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              <path d="M16.5 7.5a6.4 6.4 0 0 1 0 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              <path d="M4.4 4.4a10.6 10.6 0 0 0 0 15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity="0.45" />
+              <path d="M19.6 4.4a10.6 10.6 0 0 1 0 15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity="0.45" />
+            </svg>
+          </div>
+          <div>
+            <p class="text-[13px] font-medium text-zinc-400">No transcripts yet</p>
+            <p class="mt-0.5 text-[12px] text-zinc-600">
+              Dictate something with Ctrl + Win and it will appear here.
             </p>
-          {/each}
+          </div>
         </div>
-      </section>
-    {/if}
+      {/if}
+
+      {#each transcripts as transcript (transcript.id)}
+        <article
+          in:fly={{ y: 8, duration: 220 }}
+          animate:flip={{ duration: 220 }}
+          class="group rounded-xl border border-zinc-800 bg-zinc-900 p-3.5 transition-colors hover:border-zinc-700"
+        >
+          <div class="mb-1.5 flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 text-[11px] text-zinc-500">
+              <span class="tabular-nums">{transcript.createdAt}</span>
+              {#if transcript.language}
+                <span class="rounded bg-zinc-800 px-1.5 py-0.5 font-medium uppercase text-zinc-400">
+                  {transcript.language}
+                </span>
+              {/if}
+              {#if transcript.latencyMs !== null}
+                <span class="tabular-nums">{transcript.latencyMs} ms</span>
+              {/if}
+            </div>
+            <button
+              type="button"
+              class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium opacity-60 transition-all hover:bg-zinc-800 group-hover:opacity-100 {copiedId ===
+              transcript.id
+                ? 'text-emerald-400'
+                : 'text-zinc-400 hover:text-zinc-100'}"
+              on:click={() => copyTranscript(transcript)}
+            >
+              {#if copiedId === transcript.id}
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="h-3.5 w-3.5"
+                  aria-hidden="true"
+                >
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+                Copied
+              {:else}
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="h-3.5 w-3.5"
+                  aria-hidden="true"
+                >
+                  <rect x="9" y="9" width="11" height="11" rx="2.5" />
+                  <path d="M5 15V5.5A2.5 2.5 0 0 1 7.5 3H16" />
+                </svg>
+                Copy
+              {/if}
+            </button>
+          </div>
+          <p class="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-100">
+            {transcript.text}
+          </p>
+        </article>
+      {/each}
+    </div>
+  </main>
+
+  <!-- Toast notifications -->
+  <div class="pointer-events-none fixed bottom-4 right-4 z-50 flex w-80 flex-col gap-2">
+    {#each toasts as toast (toast.id)}
+      <div
+        in:fly={{ x: 20, duration: 200 }}
+        out:fade={{ duration: 150 }}
+        class="pointer-events-auto flex items-start gap-2.5 rounded-xl border border-rose-500/30 bg-zinc-900 p-3 shadow-xl shadow-black/50"
+      >
+        <span class="mt-px shrink-0 text-rose-400">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="h-4 w-4"
+            aria-hidden="true"
+          >
+            <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+        </span>
+        <div class="min-w-0 flex-1">
+          <p class="text-[12px] font-medium leading-snug text-zinc-200">{toast.message}</p>
+          <p class="mt-0.5 text-[10px] tabular-nums text-zinc-500">{toast.createdAt}</p>
+        </div>
+        <button
+          type="button"
+          class="shrink-0 rounded text-zinc-600 transition-colors hover:text-zinc-300"
+          on:click={() => dismissToast(toast.id)}
+          aria-label="Dismiss"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            class="h-3.5 w-3.5"
+            aria-hidden="true"
+          >
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    {/each}
   </div>
-</main>
+</div>

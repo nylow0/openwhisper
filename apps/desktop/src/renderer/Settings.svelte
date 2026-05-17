@@ -4,6 +4,9 @@
 
   const api = window.api;
   const pushToast = getContext<(message: string) => void>('pushToast');
+  const setExpectedEngineRestart = getContext<(expected: boolean) => void>(
+    'setExpectedEngineRestart'
+  );
 
   const MODELS: Array<{ id: AsrModel; name: string; detail: string }> = [
     { id: 'base_en_q8', name: 'Base', detail: 'Fastest - English only' },
@@ -33,13 +36,19 @@
   async function applyEngineChange(label: string) {
     if (!api) return;
     restarting = true;
+    setExpectedEngineRestart(true);
     const result = await api.restartEngine();
     restarting = false;
+    if (result.ok) {
+      setTimeout(() => setExpectedEngineRestart(false), 1_000);
+      return;
+    }
     pushToast(
       result.ok
         ? `${label} — speech engine restarted.`
         : `Engine restart failed: ${result.error ?? 'unknown error'}`
     );
+    setTimeout(() => setExpectedEngineRestart(false), 1_000);
   }
 
   async function chooseModel(model: AsrModel) {

@@ -13,6 +13,7 @@
   let view: View = 'history';
   let toasts: Toast[] = [];
   let nextToastId = 1;
+  let expectedEngineRestart = false;
 
   function pushToast(message: string) {
     const id = nextToastId;
@@ -27,6 +28,9 @@
 
   // Children (History / Settings) raise error toasts through this.
   setContext('pushToast', pushToast);
+  setContext('setExpectedEngineRestart', (expected: boolean) => {
+    expectedEngineRestart = expected;
+  });
 
   let unsubError: (() => void) | undefined;
   let unsubDisconnected: (() => void) | undefined;
@@ -37,9 +41,11 @@
       return;
     }
     unsubError = api.onError((data: ErrorEvent) => pushToast(`[${data.code}] ${data.message}`));
-    unsubDisconnected = api.onDisconnected(() =>
-      pushToast('Lost connection to the speech engine.')
-    );
+    unsubDisconnected = api.onDisconnected(() => {
+      if (!expectedEngineRestart) {
+        pushToast('Lost connection to the speech engine.');
+      }
+    });
   });
 
   onDestroy(() => {

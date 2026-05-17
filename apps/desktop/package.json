@@ -13,7 +13,8 @@
     "test": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview",
     "electron:dev": "tsc && bun run prepare:preload && vite build && electron .",
-    "electron:build": "tsc && bun run prepare:preload && vite build && electron-builder"
+    "electron:build": "tsc && bun run prepare:preload && vite build && electron-builder && bun run update:start-menu",
+    "update:start-menu": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update-start-menu-shortcut.ps1"
   },
   "dependencies": {},
   "devDependencies": {

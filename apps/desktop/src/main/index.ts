@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   showWindowOnLaunch: true,
 };
+const WINDOWS_APP_USER_MODEL_ID = 'com.openwhisper.desktop';
 
 let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
@@ -306,6 +307,7 @@ function registerAppIpc(): void {
 }
 
 function bootstrap(): void {
+  app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
   app.on('second-instance', () => showMainWindow());
 
   app.whenReady().then(async () => {

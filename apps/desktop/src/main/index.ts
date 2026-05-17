@@ -1,21 +1,39 @@
-import { app, BrowserWindow, globalShortcut } from 'electron';
+import { app, BrowserWindow, Menu, Tray } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, type ChildProcess } from 'child_process';
 import { fileURLToPath } from 'url';
-import { connectToRust, setMainWindow, setupIpcHandlers } from './ipc.js';
+import { connectToRust, setMainWindow, setOverlayWindow, setupIpcHandlers } from './ipc.js';
+import { createAppIcon } from './tray-icon.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+let overlayWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 let rustProcess: ChildProcess | null = null;
-const DICTATION_HOTKEY = 'CommandOrControl+Alt+Space';
+let isQuitting = false;
 
-function createWindow(): void {
+function createMainWindow(): void {
+  // The app ships its own integrated title bar — no native menu chrome.
+  Menu.setApplicationMenu(null);
+
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 760,
+    height: 820,
+    minWidth: 560,
+    minHeight: 620,
+    show: false,
+    backgroundColor: '#09090b',
+    autoHideMenuBar: true,
+    icon: createAppIcon(256),
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#09090b',
+      symbolColor: '#d4d4d8',
+      height: 44,
+    },
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -24,19 +42,102 @@ function createWindow(): void {
     },
   });
 
+  // OpenWhisper lives in the tray — closing the window just hides it.
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    mainWindow?.hide();
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
   setMainWindow(mainWindow);
-  setupIpcHandlers();
+}
+
+function createOverlayWindow(): void {
+  overlayWindow = new BrowserWindow({
+    width: 420,
+    height: 160,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    focusable: false,
+    hasShadow: false,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  // Float above everything, and never intercept clicks — it is a HUD.
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  overlayWindow.setIgnoreMouseEvents(true);
+
+  overlayWindow.on('closed', () => {
+    overlayWindow = null;
+  });
+
+  setOverlayWindow(overlayWindow);
+}
+
+function createTray(): void {
+  tray = new Tray(createAppIcon(32));
+  tray.setToolTip('OpenWhisper — hold Ctrl + Win to dictate');
+
+  const menu = Menu.buildFromTemplate([
+    { label: 'Open OpenWhisper', click: () => showMainWindow() },
+    { type: 'separator' },
+    { label: 'Hold Ctrl + Win to dictate', enabled: false },
+    { type: 'separator' },
+    {
+      label: 'Quit OpenWhisper',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+  tray.setContextMenu(menu);
+  tray.on('click', () => showMainWindow());
+}
+
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow();
+    void loadMainWindow();
+  }
+  mainWindow?.show();
+  mainWindow?.focus();
 }
 
 async function loadMainWindow(): Promise<void> {
   if (!mainWindow) throw new Error('Main window has not been created');
   if (process.env.VITE_DEV_SERVER_URL) {
     await mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools();
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
     return;
   }
-
   await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+}
+
+async function loadOverlayWindow(): Promise<void> {
+  if (!overlayWindow) throw new Error('Overlay window has not been created');
+  if (process.env.VITE_DEV_SERVER_URL) {
+    await overlayWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}/overlay.html`);
+    return;
+  }
+  await overlayWindow.loadFile(path.join(__dirname, '../renderer/overlay.html'));
 }
 
 function findProjectRoot(): string {
@@ -137,19 +238,11 @@ function startRustHelper(): Promise<string> {
   });
 }
 
-function registerGlobalShortcuts(): void {
-  const registered = globalShortcut.register(DICTATION_HOTKEY, () => {
-    mainWindow?.webContents.send('hotkey:toggle-dictation');
-  });
-
-  if (!registered) {
-    console.warn(`[Main] Failed to register global shortcut ${DICTATION_HOTKEY}`);
-  }
-}
-
 app.whenReady().then(async () => {
-  createWindow();
-  registerGlobalShortcuts();
+  createMainWindow();
+  createOverlayWindow();
+  createTray();
+  setupIpcHandlers();
 
   try {
     const pipeName = await startRustHelper();
@@ -159,14 +252,14 @@ app.whenReady().then(async () => {
     console.error('[Main] Failed to start/connect to Rust helper:', err);
   }
 
-  await loadMainWindow();
+  await Promise.all([loadMainWindow(), loadOverlayWindow()]);
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+// Tray application — keep running even when every window is closed.
+app.on('window-all-closed', () => {});
 
 app.on('before-quit', () => {
-  globalShortcut.unregisterAll();
+  isQuitting = true;
   rustProcess?.kill();
+  tray?.destroy();
 });

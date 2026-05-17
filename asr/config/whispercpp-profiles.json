@@ -16,6 +16,11 @@
       "file": "ggml-medium.en-q8_0.bin",
       "size_bytes": 823382461,
       "sha256": "43fa2cd084de5a04399a896a9a7a786064e221365c01700cea4666005218f11c"
+    },
+    "large_v3_turbo_q8": {
+      "file": "ggml-large-v3-turbo-q8_0.bin",
+      "size_bytes": 874188075,
+      "sha256": "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1"
     }
   },
   "binary_hints": {
@@ -58,6 +63,20 @@
         "peak_vram_delta_mb": 0
       }
     },
+    "cpu_avx_vnni_large_v3_turbo_q8": {
+      "device": "cpu",
+      "binary_hint": "cpu_avx_vnni",
+      "model": "large_v3_turbo_q8",
+      "args": ["-l", "auto", "-nt", "-oj", "-np", "-t", "16", "-ac", "1024"],
+      "benchmark": {
+        "wer_percent": null,
+        "first_result_seconds": null,
+        "wall_seconds": null,
+        "rtf": null,
+        "peak_ram_mb": 0,
+        "peak_vram_delta_mb": 0
+      }
+    },
     "gpu_cuda_sm120_base_en_q8": {
       "device": "gpu",
       "binary_hint": "gpu_cuda_sm120",
@@ -84,6 +103,20 @@
         "rtf": 0.077,
         "peak_ram_mb": 440.2,
         "peak_vram_delta_mb": 1617
+      }
+    },
+    "gpu_cuda_sm120_large_v3_turbo_q8": {
+      "device": "gpu",
+      "binary_hint": "gpu_cuda_sm120",
+      "model": "large_v3_turbo_q8",
+      "args": ["-l", "auto", "-nt", "-oj", "-np"],
+      "benchmark": {
+        "wer_percent": 2.39,
+        "first_result_seconds": 1.08,
+        "wall_seconds": 7.6,
+        "rtf": 0.056,
+        "peak_ram_mb": 441.3,
+        "peak_vram_delta_mb": 1309
       }
     }
   },

@@ -24,6 +24,10 @@ _MODEL_ALIASES = {
     "medium": "medium_en_q8",
     "medium-q8": "medium_en_q8",
     "medium_en_q8": "medium_en_q8",
+    "turbo": "large_v3_turbo_q8",
+    "large-v3-turbo": "large_v3_turbo_q8",
+    "large-v3-turbo-q8": "large_v3_turbo_q8",
+    "large_v3_turbo_q8": "large_v3_turbo_q8",
 }
 
 _LOCAL_BINARY_CANDIDATES = {

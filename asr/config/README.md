@@ -11,8 +11,10 @@ the local path described in `whispercpp-profiles.json` for development.
 
 | Profile | Use case |
 |---|---|
+| `gpu_cuda_sm120_large_v3_turbo_q8` | Best current multilingual q8 profile; recommended upgrade candidate. |
 | `gpu_cuda_sm120_medium_en_q8` | Best current medium q8 profile when the RTX 5060 CUDA build is available. |
 | `gpu_cuda_sm120_base_en_q8` | Fastest validated base q8 GPU profile. |
+| `cpu_avx_vnni_large_v3_turbo_q8` | CPU fallback for the multilingual turbo q8 model. |
 | `cpu_avx_vnni_medium_en_q8` | Best current medium q8 CPU fallback profile. |
 | `cpu_avx_vnni_base_en_q8` | Best current base q8 CPU fallback profile. |
 

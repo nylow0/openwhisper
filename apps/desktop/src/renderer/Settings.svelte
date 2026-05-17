@@ -6,8 +6,9 @@
   const pushToast = getContext<(message: string) => void>('pushToast');
 
   const MODELS: Array<{ id: AsrModel; name: string; detail: string }> = [
-    { id: 'base_en_q8', name: 'Base', detail: 'Fastest · ~4% word error rate' },
-    { id: 'medium_en_q8', name: 'Medium', detail: 'Most accurate · ~2% word error rate' },
+    { id: 'base_en_q8', name: 'Base', detail: 'Fastest - English only' },
+    { id: 'medium_en_q8', name: 'Medium', detail: 'Accurate - English only' },
+    { id: 'large_v3_turbo_q8', name: 'Turbo', detail: 'Multilingual - best upgrade candidate' },
   ];
   const DEVICES: Array<{ id: AsrDevice; name: string }> = [
     { id: 'auto', name: 'Auto' },

@@ -115,7 +115,7 @@ export type Event =
 
 // ─── App-level settings & history (Electron <-> renderer) ───
 
-export type AsrModel = 'base_en_q8' | 'medium_en_q8';
+export type AsrModel = 'base_en_q8' | 'medium_en_q8' | 'large_v3_turbo_q8';
 export type AsrDevice = 'auto' | 'cpu' | 'gpu';
 
 export interface AppSettings {

@@ -39,9 +39,6 @@ uv run ow-asr record .\.local\recordings\test.wav --seconds 5 --transcribe
 # Real whisper.cpp transcription with the default medium q8 profile
 uv run ow-asr transcribe .\test_data\samples\librispeech-clean-6930-75918-0000.wav
 
-# Faster base q8 smoke test
-uv run ow-asr transcribe .\test_data\samples\librispeech-clean-6930-75918-0000.wav --model base --device cpu
-
 # Mock transcription for protocol/UI work
 uv run ow-asr mock
 

@@ -9,9 +9,8 @@
   );
 
   const MODELS: Array<{ id: AsrModel; name: string; detail: string }> = [
-    { id: 'base_en_q8', name: 'Base', detail: 'Fastest - English only' },
-    { id: 'medium_en_q8', name: 'Medium', detail: 'Accurate - English only' },
-    { id: 'large_v3_turbo_q8', name: 'Turbo', detail: 'Multilingual - best upgrade candidate' },
+    { id: 'medium_en_q8', name: 'English', detail: 'Best for English dictation' },
+    { id: 'large_v3_turbo_q8', name: 'Multilingual', detail: 'Use for multiple languages' },
   ];
   const DEVICES: Array<{ id: AsrDevice; name: string }> = [
     { id: 'auto', name: 'Auto' },

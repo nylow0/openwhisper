@@ -18,9 +18,6 @@ from openwhisper_asr.types import TranscriptionResult
 JsonDict = dict[str, object]
 
 _MODEL_ALIASES = {
-    "base": "base_en_q8",
-    "base-q8": "base_en_q8",
-    "base_en_q8": "base_en_q8",
     "medium": "medium_en_q8",
     "medium-q8": "medium_en_q8",
     "medium_en_q8": "medium_en_q8",

@@ -2,14 +2,17 @@ import { BrowserWindow, ipcMain, screen, type IpcMainInvokeEvent } from 'electro
 import * as net from 'net';
 import { EventEmitter } from 'events';
 import type {
-  Command,
   Event,
   HistoryItem,
   StatusEvent,
   TranscriptFinalEvent,
-  UserSettings,
 } from '../shared/types';
 import { loadJson, saveJson } from './store.js';
+
+type RustCommand =
+  | { type: 'dictation.start' }
+  | { type: 'dictation.stop' }
+  | { type: 'status.get' };
 
 type PendingRequest = {
   resolve: (value: Event) => void;
@@ -96,12 +99,12 @@ class RustClient extends EventEmitter {
     pending.resolve(parsed);
   }
 
-  send(command: Command): void {
+  send(command: RustCommand): void {
     if (!this.socket) throw new Error('Not connected to Rust');
     this.socket.write(`${JSON.stringify(command)}\n`);
   }
 
-  request(command: Command, expectedEventType: Event['type'], timeoutMs = 5_000): Promise<Event> {
+  request(command: RustCommand, expectedEventType: Event['type'], timeoutMs = 5_000): Promise<Event> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
         reject(new Error('Not connected to Rust'));
@@ -268,15 +271,6 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('status:get', async () => getStatus());
-
-  ipcMain.handle(
-    'settings:update',
-    async (_event: IpcMainInvokeEvent, settings: UserSettings) => {
-      if (!rustClient) throw new Error('Rust not connected');
-      rustClient.send({ type: 'settings.update', settings });
-      return { success: true };
-    }
-  );
 
   ipcMain.handle('health-check', async () => {
     const status = await getStatus();

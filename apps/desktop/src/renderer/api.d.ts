@@ -8,7 +8,6 @@ import type {
   StatusEvent,
   TranscriptFinalEvent,
   TranscriptPartialEvent,
-  UserSettings,
 } from '../shared/types';
 
 export {};
@@ -31,7 +30,6 @@ declare global {
     startDictation: () => Promise<{ success: boolean }>;
     stopDictation: () => Promise<{ success: boolean }>;
     getStatus: () => Promise<StatusEvent>;
-    updateSettings: (settings: UserSettings) => Promise<{ success: boolean }>;
     healthCheck: () => Promise<HealthCheckResult>;
 
     onTranscript: (callback: (data: Event) => void) => () => void;

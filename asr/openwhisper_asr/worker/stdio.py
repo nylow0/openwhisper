@@ -371,13 +371,6 @@ def handle_message(msg: JsonObject, dictation: DictationHandler, writer: WorkerW
         dictation.load_model(msg)
         return False
 
-    if msg_type == "settings.update":
-        logger.info("Settings update: %s", msg)
-        return False
-
-    if msg_type == "audio.chunk":
-        return False
-
     logger.warning("Unknown message type: %s", msg_type)
     writer.error(message=f"Unknown message type: {msg_type}", recoverable=True, code="PROTOCOL_ERROR")
     return False

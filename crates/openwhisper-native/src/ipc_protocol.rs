@@ -6,16 +6,13 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type")]
 pub enum IpcCommand {
     #[serde(rename = "dictation.start")]
-    DictationStart { settings: Option<serde_json::Value> },
+    DictationStart,
 
     #[serde(rename = "dictation.stop")]
     DictationStop,
 
     #[serde(rename = "status.get")]
     GetStatus,
-
-    #[serde(rename = "settings.update")]
-    UpdateSettings { settings: serde_json::Value },
 }
 
 #[derive(Serialize, Debug, Clone)]

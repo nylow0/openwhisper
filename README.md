@@ -51,5 +51,4 @@ apps/desktop/               # Electron app
 asr/                        # Python ASR runtime and whisper.cpp profiles
 crates/openwhisper-native/  # Rust helper
 models/                     # Git LFS model assets used by the product
-packages/protocol/          # Shared schemas
 ```

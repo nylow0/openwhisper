@@ -117,7 +117,7 @@ def test_dictation_stop_transcribes_the_recorded_wav_path() -> None:
     assert lines[1]["text"] == "real recorded speech"
     assert recorders[0].started is True
     assert recorders[0].stopped is True
-    assert engine.loaded_model == "base"
+    assert engine.loaded_model == "medium"
     assert engine.loaded_device == "cpu"
     assert engine.transcribed_audio == str(recorders[0].path.resolve())
 
@@ -147,7 +147,7 @@ def test_dictation_start_reports_audio_error_when_microphone_cannot_start() -> N
 def _worker_config() -> WorkerConfig:
     return WorkerConfig(
         engine_name="whispercpp",
-        model="base",
+        model="medium",
         device="cpu",
         profile=None,
         timeout_seconds=1,

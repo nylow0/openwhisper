@@ -25,6 +25,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   showWindowOnLaunch: true,
 };
 const WINDOWS_APP_USER_MODEL_ID = 'com.openwhisper.desktop';
+type StoredSettings = Partial<Omit<AppSettings, 'model'>> & { model?: unknown };
 
 let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
@@ -33,8 +34,20 @@ let rustProcess: ChildProcess | null = null;
 let isQuitting = false;
 let settings: AppSettings = DEFAULT_SETTINGS;
 
+function isAsrModel(model: unknown): model is AppSettings['model'] {
+  return model === 'medium_en_q8' || model === 'large_v3_turbo_q8';
+}
+
+function normalizeSettings(storedSettings: StoredSettings): AppSettings {
+  const nextSettings = { ...DEFAULT_SETTINGS, ...storedSettings };
+  return {
+    ...nextSettings,
+    model: isAsrModel(nextSettings.model) ? nextSettings.model : DEFAULT_SETTINGS.model,
+  };
+}
+
 function loadSettings(): AppSettings {
-  return { ...DEFAULT_SETTINGS, ...loadJson<Partial<AppSettings>>(SETTINGS_FILE, {}) };
+  return normalizeSettings(loadJson<StoredSettings>(SETTINGS_FILE, {}));
 }
 
 function createMainWindow(): void {
@@ -295,7 +308,7 @@ function registerAppIpc(): void {
   ipcMain.handle('settings:read', () => settings);
 
   ipcMain.handle('settings:write', (_event, partial: Partial<AppSettings>) => {
-    settings = { ...settings, ...partial };
+    settings = normalizeSettings({ ...settings, ...partial });
     saveJson(SETTINGS_FILE, settings);
     if ('launchAtLogin' in partial) {
       app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::sync::RwLock;
 use tokio::signal;
+use tokio::sync::RwLock;
 
 mod hotkey;
 mod inject;
@@ -14,7 +14,7 @@ mod python;
 use hotkey::HotkeyEvent;
 use ipc::IpcServer;
 use ipc_protocol::{IpcCommand, IpcEvent};
-use protocol::{FromPython, PythonSettings, ToPython};
+use protocol::{FromPython, ToPython};
 use python::PythonWorker;
 
 #[derive(Debug, Clone)]
@@ -22,36 +22,6 @@ struct AppState {
     is_dictating: bool,
     is_model_loaded: bool,
     worker_healthy: bool,
-}
-
-fn python_settings_from_ipc(settings: Option<&serde_json::Value>) -> PythonSettings {
-    let audio = settings
-        .and_then(|value| value.get("audio"))
-        .or(settings);
-    let dictation = settings.and_then(|value| value.get("dictation"));
-
-    let language = dictation
-        .and_then(|value| value.get("language"))
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.is_empty() && *value != "auto")
-        .map(ToOwned::to_owned);
-
-    let chunk_duration_ms = audio
-        .and_then(|value| value.get("chunkDurationMs"))
-        .and_then(|value| value.as_u64())
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(2_000);
-
-    let vad_enabled = audio
-        .and_then(|value| value.get("vadEnabled"))
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true);
-
-    PythonSettings {
-        language,
-        chunk_duration_ms,
-        vad_enabled,
-    }
 }
 
 fn unix_secs() -> u64 {
@@ -119,9 +89,8 @@ async fn main() -> Result<()> {
                 Some(cmd) = ipc_cmd_rx.recv() => {
                     let mut s = state_clone.write().await;
                     match cmd {
-                        IpcCommand::DictationStart { settings } => {
+                        IpcCommand::DictationStart => {
                             log::info!("Received dictation.start from Electron");
-                            let python_settings = python_settings_from_ipc(settings.as_ref());
                             s.is_dictating = true;
                             drop(s);
                             let _ = ipc_event_tx.send(IpcEvent::DictationStarted {
@@ -130,10 +99,7 @@ async fn main() -> Result<()> {
                                     .unwrap_or_default()
                                     .as_secs(),
                             }).await;
-                            if let Err(e) = python_worker.send(ToPython::DictationStart {
-                                language: python_settings.language,
-                                chunk_duration_ms: python_settings.chunk_duration_ms,
-                            }).await {
+                            if let Err(e) = python_worker.send(ToPython::DictationStart).await {
                                 log::error!("Failed to send dictation.start to Python: {}", e);
                             }
                         }
@@ -160,16 +126,6 @@ async fn main() -> Result<()> {
                                 is_model_loaded: status.is_model_loaded,
                                 worker_healthy: status.worker_healthy,
                             }).await;
-                        }
-                        IpcCommand::UpdateSettings { settings } => {
-                            log::info!("Received settings.update from Electron");
-                            let python_settings = python_settings_from_ipc(Some(&settings));
-                            drop(s);
-                            if let Err(e) = python_worker.send(ToPython::SettingsUpdate {
-                                settings: python_settings,
-                            }).await {
-                                log::error!("Failed to send settings.update to Python: {}", e);
-                            }
                         }
                     }
                 }
@@ -213,10 +169,7 @@ async fn main() -> Result<()> {
                         let _ = ipc_event_tx.send(IpcEvent::DictationStarted {
                             timestamp: unix_secs(),
                         }).await;
-                        if let Err(e) = python_worker.send(ToPython::DictationStart {
-                            language: None,
-                            chunk_duration_ms: 2_000,
-                        }).await {
+                        if let Err(e) = python_worker.send(ToPython::DictationStart).await {
                             log::error!("Failed to send dictation.start to Python: {}", e);
                         }
                     }

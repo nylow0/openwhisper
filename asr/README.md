@@ -49,12 +49,6 @@ uv run ow-asr mock
 $env:OPENWHISPER_ASR_ENGINE="mock"; uv run ow-asr serve
 ```
 
-Heavy model runtimes are optional. Install them only when testing that engine:
-
-```powershell
-uv sync --extra nemo
-```
-
 ## Model Assets
 
 This directory owns ASR code and runtime profiles, but not heavy model binaries.

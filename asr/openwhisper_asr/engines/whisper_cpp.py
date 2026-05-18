@@ -190,15 +190,29 @@ class WhisperCppEngine(ASREngine):
             ]
 
             start = time.perf_counter()
-            completed = subprocess.run(
-                command,
-                cwd=str(self._asr_root),
-                env=self._subprocess_env(selection),
-                capture_output=True,
-                text=True,
-                timeout=self._timeout_seconds,
-                check=False,
-            )
+            if os.name == "nt":
+                # Prevent console window flash on Windows when the worker is
+                # running as a background / GUI-launched process.
+                completed = subprocess.run(
+                    command,
+                    cwd=str(self._asr_root),
+                    env=self._subprocess_env(selection),
+                    capture_output=True,
+                    text=True,
+                    timeout=self._timeout_seconds,
+                    check=False,
+                    creationflags=0x08000000,  # CREATE_NO_WINDOW
+                )
+            else:
+                completed = subprocess.run(
+                    command,
+                    cwd=str(self._asr_root),
+                    env=self._subprocess_env(selection),
+                    capture_output=True,
+                    text=True,
+                    timeout=self._timeout_seconds,
+                    check=False,
+                )
             elapsed_ms = int((time.perf_counter() - start) * 1000)
 
             if completed.returncode != 0:
@@ -334,6 +348,10 @@ class WhisperCppEngine(ASREngine):
         if existing_path:
             path_parts.append(existing_path)
         env["PATH"] = os.pathsep.join(path_parts)
+        if selection.profile.device == "cpu":
+            # Prevent OpenBLAS from spawning its own thread pool and competing
+            # with whisper.cpp's OpenMP threading on CPU inference.
+            env["OPENBLAS_NUM_THREADS"] = "1"
         return env
 
 

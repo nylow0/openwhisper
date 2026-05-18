@@ -10,13 +10,6 @@ pub struct WordResult {
     pub confidence: Option<f32>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PythonSettings {
-    pub language: Option<String>,
-    pub chunk_duration_ms: u32,
-    pub vad_enabled: bool,
-}
-
 // ─── Messages Rust → Python ───
 
 #[derive(Serialize, Debug, Clone)]
@@ -26,16 +19,10 @@ pub enum ToPython {
     HealthCheck { timestamp: u64 },
 
     #[serde(rename = "dictation.start")]
-    DictationStart {
-        language: Option<String>,
-        chunk_duration_ms: u32,
-    },
+    DictationStart,
 
     #[serde(rename = "dictation.stop")]
     DictationStop,
-
-    #[serde(rename = "settings.update")]
-    SettingsUpdate { settings: PythonSettings },
 }
 
 // ─── Messages Python → Rust ───

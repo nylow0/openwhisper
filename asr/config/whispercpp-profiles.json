@@ -127,6 +127,11 @@
       "reason": "Fast startup but unacceptable WER: base 83.27%, medium 106.97%."
     },
     {
+      "name": "cpu_ac512",
+      "args": ["-t", "16", "-ac", "512"],
+      "reason": "Causes token repetition hallucinations on audio longer than ~10 seconds."
+    },
+    {
       "name": "cpu_processors_4",
       "args": ["-p", "4", "-t", "4", "-ac", "1024"],
       "reason": "Worse first result, wall time, memory use, and WER on the 25-clip benchmark."

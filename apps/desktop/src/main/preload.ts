@@ -19,7 +19,6 @@ contextBridge.exposeInMainWorld('api', {
   startDictation: () => ipcRenderer.invoke('dictation:start'),
   stopDictation: () => ipcRenderer.invoke('dictation:stop'),
   getStatus: () => ipcRenderer.invoke('status:get'),
-  updateSettings: (settings: unknown) => ipcRenderer.invoke('settings:update', settings),
   healthCheck: () => ipcRenderer.invoke('health-check'),
 
   onTranscript: (callback: (data: unknown) => void) => onChannel('asr:event', callback),

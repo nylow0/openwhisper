@@ -9,6 +9,7 @@ from openwhisper_asr.engines.whisper_cpp import (
     WhisperCppEngine,
     WhisperCppProfile,
     WhisperCppSelection,
+    force_whisper_cpp_language_args,
     parse_whisper_cpp_payload,
 )
 
@@ -28,6 +29,25 @@ def test_parse_whisper_cpp_payload_returns_final_text() -> None:
     assert result.language == "en"
     assert result.is_partial is False
     assert result.processing_latency_ms == 1234
+
+
+def test_force_whisper_cpp_language_args_replaces_short_language() -> None:
+    args = force_whisper_cpp_language_args(["-l", "auto", "-nt"], "pl")
+
+    assert args == ("-nt", "-l", "pl")
+
+
+def test_force_whisper_cpp_language_args_replaces_long_language_without_auto() -> None:
+    args = force_whisper_cpp_language_args(["--language", "auto", "-oj"], "en")
+
+    assert args == ("-oj", "-l", "en")
+    assert "auto" not in args
+
+
+def test_force_whisper_cpp_language_args_adds_missing_language() -> None:
+    args = force_whisper_cpp_language_args(["-nt", "-oj"], "de")
+
+    assert args == ("-nt", "-oj", "-l", "de")
 
 
 def test_cpu_subprocess_env_caps_openblas_threads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

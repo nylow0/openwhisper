@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   model: 'medium_en_q8',
   device: 'auto',
   spokenLanguages: ['en'],
+  autoDetectLanguage: false,
   launchAtLogin: false,
   showWindowOnLaunch: true,
 };
@@ -29,9 +30,10 @@ const SUPPORTED_SPOKEN_LANGUAGES = new Set<AsrLanguageCode>(
   SUPPORTED_ASR_LANGUAGES.map((language) => language.id)
 );
 const WINDOWS_APP_USER_MODEL_ID = 'com.openwhisper.desktop';
-type StoredSettings = Partial<Omit<AppSettings, 'model' | 'spokenLanguages'>> & {
+type StoredSettings = Partial<Omit<AppSettings, 'model' | 'spokenLanguages' | 'autoDetectLanguage'>> & {
   model?: unknown;
   spokenLanguages?: unknown;
+  autoDetectLanguage?: unknown;
 };
 
 let mainWindow: BrowserWindow | null = null;
@@ -69,11 +71,14 @@ function normalizeSpokenLanguages(value: unknown, model: AppSettings['model']): 
 function normalizeSettings(storedSettings: StoredSettings): AppSettings {
   const nextSettings = { ...DEFAULT_SETTINGS, ...storedSettings };
   const model = isAsrModel(nextSettings.model) ? nextSettings.model : DEFAULT_SETTINGS.model;
+  const autoDetectLanguage =
+    model === 'large_v3_turbo_q8' && nextSettings.autoDetectLanguage === true;
 
   return {
     ...nextSettings,
     model,
     spokenLanguages: normalizeSpokenLanguages(nextSettings.spokenLanguages, model),
+    autoDetectLanguage,
   };
 }
 
@@ -241,6 +246,7 @@ function rustEnv(): NodeJS.ProcessEnv {
     OPENWHISPER_ASR_MODEL: settings.model,
     OPENWHISPER_ASR_DEVICE: settings.device,
     OPENWHISPER_ASR_LANGUAGES: settings.spokenLanguages.join(','),
+    OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE: settings.autoDetectLanguage ? '1' : '0',
   };
 }
 

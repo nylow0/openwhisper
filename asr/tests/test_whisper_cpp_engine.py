@@ -199,6 +199,33 @@ def test_transcribe_batch_uses_forced_language_when_output_language_is_missing(
     assert result.language == "pl"
 
 
+def test_transcribe_batch_auto_detect_uses_native_whisper_language_detection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = _loaded_engine(
+        tmp_path,
+        spoken_languages=("en", "pl"),
+        profile_args=("-l", "pl", "-oj"),
+        auto_detect_language=True,
+    )
+    audio_path = _audio_file(tmp_path)
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        _write_whisper_output(command, {"result": {"language": "ja"}, "transcription": [{"text": " hai"}]})
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("openwhisper_asr.engines.whisper_cpp.subprocess.run", fake_run)
+
+    result = engine.transcribe_batch(str(audio_path))
+
+    assert result.language == "ja"
+    assert commands[0][commands[0].index("-l") + 1] == "auto"
+    assert len(commands) == 1
+
+
 def test_transcribe_batch_rejects_output_language_outside_allowed_list(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -230,6 +257,28 @@ def test_transcribe_batch_rejects_supported_language_outside_configured_spoken_l
     monkeypatch.setattr("openwhisper_asr.engines.whisper_cpp.subprocess.run", fake_run)
 
     with pytest.raises(WhisperCppError, match="outside configured spoken languages: en"):
+        engine.transcribe_batch(str(audio_path))
+
+
+def test_transcribe_batch_auto_detect_rejects_unknown_detected_language(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = _loaded_engine(
+        tmp_path,
+        spoken_languages=("en",),
+        profile_args=("-l", "auto", "-oj"),
+        auto_detect_language=True,
+    )
+    audio_path = _audio_file(tmp_path)
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        _write_whisper_output(command, {"result": {"language": "zz"}, "transcription": [{"text": " text"}]})
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("openwhisper_asr.engines.whisper_cpp.subprocess.run", fake_run)
+
+    with pytest.raises(WhisperCppError, match="unsupported language: zz"):
         engine.transcribe_batch(str(audio_path))
 
 
@@ -273,6 +322,7 @@ def _loaded_engine(
     tmp_path: Path,
     spoken_languages: tuple[str, ...],
     profile_args: tuple[str, ...],
+    auto_detect_language: bool = False,
 ) -> WhisperCppEngine:
     config_path = tmp_path / "config" / "whispercpp-profiles.json"
     config_path.parent.mkdir()
@@ -289,7 +339,11 @@ def _loaded_engine(
         ),
         encoding="utf-8",
     )
-    engine = WhisperCppEngine(config_path=config_path, spoken_languages=spoken_languages)
+    engine = WhisperCppEngine(
+        config_path=config_path,
+        spoken_languages=spoken_languages,
+        auto_detect_language=auto_detect_language,
+    )
     profile = WhisperCppProfile(
         name="cpu_avx_vnni_medium_en_q8",
         device="cpu",

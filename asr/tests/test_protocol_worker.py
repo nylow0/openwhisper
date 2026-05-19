@@ -171,6 +171,14 @@ def test_default_worker_config_normalizes_spoken_languages(monkeypatch: pytest.M
     assert config.spoken_languages == ("pl", "en", "de", "yue", "ja")
 
 
+def test_default_worker_config_reads_auto_detect_language(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE", "true")
+
+    config = default_worker_config()
+
+    assert config.auto_detect_language is True
+
+
 def test_default_worker_config_falls_back_to_english_when_all_spoken_languages_are_invalid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -187,6 +195,7 @@ def _worker_config() -> WorkerConfig:
         model="medium",
         device="cpu",
         spoken_languages=("en",),
+        auto_detect_language=False,
         profile=None,
         timeout_seconds=1,
         sample_rate_hz=16_000,

@@ -324,6 +324,7 @@ class RecordingDictationHandler:
         return WhisperCppEngine(
             profile=self._config.profile,
             timeout_seconds=self._config.timeout_seconds,
+            spoken_languages=self._config.spoken_languages,
         )
 
     def _create_recorder(self, path: Path) -> Recorder:

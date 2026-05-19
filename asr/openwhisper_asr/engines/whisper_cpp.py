@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -16,6 +16,8 @@ from openwhisper_asr.engine import ASREngine
 from openwhisper_asr.types import TranscriptionResult
 
 JsonDict = dict[str, object]
+
+SUPPORTED_SPOKEN_LANGUAGES = frozenset({"en", "pl", "de", "es", "fr", "it", "pt", "nl", "uk", "ru"})
 
 _MODEL_ALIASES = {
     "medium": "medium_en_q8",
@@ -128,12 +130,14 @@ class WhisperCppEngine(ASREngine):
         config_path: str | Path | None = None,
         profile: str | None = None,
         timeout_seconds: int = 300,
+        spoken_languages: tuple[str, ...] = ("en",),
     ) -> None:
         self._config_path = Path(config_path).resolve() if config_path is not None else default_config_path()
         self._asr_root = self._config_path.parents[1]
         self._config = _load_json(self._config_path)
         self._profile_name = profile
         self._timeout_seconds = timeout_seconds
+        self._spoken_languages = _normalize_spoken_languages(spoken_languages)
         self._selection: WhisperCppSelection | None = None
 
     @property
@@ -193,13 +197,19 @@ class WhisperCppEngine(ASREngine):
 
         with tempfile.TemporaryDirectory(prefix="openwhisper-asr-") as temp_dir:
             output_base = Path(temp_dir) / "transcript"
+            forced_language = self._spoken_languages[0] if len(self._spoken_languages) == 1 else None
+            profile_args = (
+                force_whisper_cpp_language_args(selection.profile.args, forced_language)
+                if forced_language is not None
+                else selection.profile.args
+            )
             command = [
                 str(selection.exe_path),
                 "-m",
                 str(selection.model_path),
                 "-f",
                 str(audio),
-                *selection.profile.args,
+                *profile_args,
                 "-of",
                 str(output_base),
             ]
@@ -244,7 +254,14 @@ class WhisperCppEngine(ASREngine):
                 )
 
             payload = _load_json(json_path)
-            return parse_whisper_cpp_payload(payload, processing_latency_ms=elapsed_ms)
+            result = parse_whisper_cpp_payload(payload, processing_latency_ms=elapsed_ms)
+            if result.language is None:
+                result = replace(result, language=forced_language)
+            if result.language is not None and result.language not in self._spoken_languages:
+                raise WhisperCppError(
+                    f"whisper.cpp returned language outside configured spoken languages: {result.language}"
+                )
+            return result
 
     def transcribe_chunk(self, audio_pcm: bytes, sample_rate_hz: int) -> TranscriptionResult | None:
         return None
@@ -377,6 +394,16 @@ def _normalize_model_key(model: str | None) -> str:
     if key is None:
         raise WhisperCppError(f"Unsupported whisper.cpp model: {model}")
     return key
+
+
+def _normalize_spoken_languages(spoken_languages: tuple[str, ...]) -> tuple[str, ...]:
+    languages: list[str] = []
+    for item in spoken_languages:
+        language = item.strip().lower()
+        if language not in SUPPORTED_SPOKEN_LANGUAGES or language in languages:
+            continue
+        languages.append(language)
+    return tuple(languages) if languages else ("en",)
 
 
 def _load_json(path: Path) -> JsonDict:

@@ -160,6 +160,7 @@ class WorkerConfig:
     model: str
     device: str
     spoken_languages: tuple[str, ...]
+    auto_detect_language: bool
     profile: str | None
     timeout_seconds: int
     sample_rate_hz: int
@@ -428,6 +429,7 @@ class RecordingDictationHandler:
             profile=self._config.profile,
             timeout_seconds=self._config.timeout_seconds,
             spoken_languages=self._config.spoken_languages,
+            auto_detect_language=self._config.auto_detect_language,
         )
 
     def _create_recorder(self, path: Path) -> Recorder:
@@ -489,6 +491,7 @@ def default_worker_config() -> WorkerConfig:
         model=os.environ.get("OPENWHISPER_ASR_MODEL", "medium_en_q8"),
         device=os.environ.get("OPENWHISPER_ASR_DEVICE", "auto"),
         spoken_languages=_spoken_languages_env("OPENWHISPER_ASR_LANGUAGES"),
+        auto_detect_language=_bool_env("OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE", False),
         profile=_optional_env("OPENWHISPER_ASR_PROFILE"),
         timeout_seconds=_int_env("OPENWHISPER_ASR_TIMEOUT_SECONDS", 300),
         sample_rate_hz=_int_env("OPENWHISPER_RECORDING_SAMPLE_RATE_HZ", DEFAULT_SAMPLE_RATE_HZ),
@@ -513,6 +516,19 @@ def _int_env(name: str, fallback: int) -> int:
     except ValueError:
         logger.warning("Ignoring invalid integer env %s=%s", name, raw)
         return fallback
+
+
+def _bool_env(name: str, fallback: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return fallback
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    logger.warning("Ignoring invalid boolean env %s=%s", name, raw)
+    return fallback
 
 
 def _spoken_languages_env(name: str) -> tuple[str, ...]:

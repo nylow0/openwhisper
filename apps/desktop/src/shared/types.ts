@@ -170,6 +170,8 @@ export interface AppSettings {
   device: AsrDevice;
   /** Spoken languages enabled for transcription. */
   spokenLanguages: AsrLanguageCode[];
+  /** Let whisper.cpp detect from every supported language instead of selected languages. */
+  autoDetectLanguage: boolean;
   /** Start OpenWhisper automatically when the user signs in. */
   launchAtLogin: boolean;
   /** Open the main window on launch (vs. starting only in the tray). */

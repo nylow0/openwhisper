@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { getContext, onMount, tick } from 'svelte';
   import {
     SUPPORTED_ASR_LANGUAGES,
     type AppSettings,
@@ -23,17 +23,55 @@
     { id: 'cpu', name: 'CPU' },
     { id: 'gpu', name: 'GPU' },
   ];
-  const LANGUAGES = [...SUPPORTED_ASR_LANGUAGES].sort((a, b) => a.name.localeCompare(b.name));
+
+  type Language = (typeof SUPPORTED_ASR_LANGUAGES)[number];
+  type LanguageOption = Language & {
+    flag: string;
+    nativeName: string;
+    searchText: string;
+  };
+
+  const LANGUAGES: LanguageOption[] = [...SUPPORTED_ASR_LANGUAGES]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((language) => {
+      const nativeName = nativeLanguageName(language.id, language.name);
+      return {
+        ...language,
+        flag: languageFlag(language.id),
+        nativeName,
+        searchText: `${language.name} ${nativeName} ${language.id}`.toLowerCase(),
+      };
+    });
+  const LANGUAGE_BY_ID = new Map<AsrLanguageCode, LanguageOption>(
+    LANGUAGES.map((language) => [language.id, language])
+  );
 
   let settings: AppSettings | null = null;
   let restarting = false;
-  let languagesOpen = false;
+  let languagePickerOpen = false;
+  let languageSearch = '';
+  let selectedLanguages: AsrLanguageCode[] = ['en'];
+  let draftLanguages: AsrLanguageCode[] = ['en'];
+  let draftAutoDetect = false;
+  let languageSearchInput: HTMLInputElement | null = null;
 
   $: selectedLanguages =
     settings?.model === 'medium_en_q8' ? ['en'] : settings?.spokenLanguages ?? ['en'];
-  $: selectedLanguageNames = LANGUAGES.filter((language) =>
-    selectedLanguages.includes(language.id)
-  ).map((language) => language.name);
+  $: selectedLanguageOptions = selectedLanguages
+    .map((language) => LANGUAGE_BY_ID.get(language))
+    .filter(isLanguageOption);
+  $: selectedLanguageNames = selectedLanguageOptions.map((language) => language.name);
+  $: languageSummary =
+    settings?.model === 'large_v3_turbo_q8' && settings.autoDetectLanguage
+      ? 'Auto-detect'
+      : selectedLanguageNames.join(', ');
+  $: normalizedLanguageSearch = languageSearch.trim().toLowerCase();
+  $: filteredLanguages = normalizedLanguageSearch
+    ? LANGUAGES.filter((language) => language.searchText.includes(normalizedLanguageSearch))
+    : LANGUAGES;
+  $: draftLanguageOptions = draftLanguages
+    .map((language) => LANGUAGE_BY_ID.get(language))
+    .filter(isLanguageOption);
 
   onMount(async () => {
     if (!api) return;
@@ -66,9 +104,11 @@
 
   async function chooseModel(model: AsrModel) {
     if (!settings || restarting || settings.model === model) return;
-    languagesOpen = model === 'large_v3_turbo_q8';
     await patch({ model });
     await applyEngineChange('Model updated');
+    if (model === 'large_v3_turbo_q8') {
+      await openLanguagePicker();
+    }
   }
 
   async function chooseDevice(device: AsrDevice) {
@@ -77,19 +117,87 @@
     await applyEngineChange('Compute device updated');
   }
 
-  async function toggleLanguage(language: AsrLanguageCode) {
+  function isLanguageOption(value: LanguageOption | undefined): value is LanguageOption {
+    return value !== undefined;
+  }
+
+  function languageFlag(language: AsrLanguageCode): string {
+    try {
+      const region = new Intl.Locale(language).maximize().region;
+      if (!region || region.length !== 2) return '';
+      const codePoints = [...region.toUpperCase()].map(
+        (letter) => 0x1f1e6 + letter.charCodeAt(0) - 65
+      );
+      return String.fromCodePoint(...codePoints);
+    } catch {
+      return '';
+    }
+  }
+
+  function nativeLanguageName(language: AsrLanguageCode, fallback: string): string {
+    try {
+      const name = new Intl.DisplayNames([language], { type: 'language' }).of(language);
+      if (!name) return fallback;
+      return name.charAt(0).toLocaleUpperCase(language) + name.slice(1);
+    } catch {
+      return fallback;
+    }
+  }
+
+  function sameLanguages(left: AsrLanguageCode[], right: AsrLanguageCode[]): boolean {
+    return left.length === right.length && left.every((language, index) => language === right[index]);
+  }
+
+  async function openLanguagePicker() {
+    if (!settings || restarting) return;
+    draftLanguages = [...selectedLanguages];
+    draftAutoDetect =
+      settings.model === 'large_v3_turbo_q8' ? settings.autoDetectLanguage : false;
+    languageSearch = '';
+    languagePickerOpen = true;
+    await tick();
+    languageSearchInput?.focus();
+  }
+
+  function closeLanguagePicker() {
+    languagePickerOpen = false;
+  }
+
+  function toggleDraftLanguage(language: AsrLanguageCode) {
+    if (draftAutoDetect) return;
+    const isSelected = draftLanguages.includes(language);
+    if (isSelected && draftLanguages.length === 1) return;
+
+    draftLanguages = isSelected
+      ? draftLanguages.filter((selectedLanguage) => selectedLanguage !== language)
+      : [...draftLanguages, language];
+  }
+
+  function removeDraftLanguage(language: AsrLanguageCode) {
+    if (draftAutoDetect || draftLanguages.length === 1) return;
+    draftLanguages = draftLanguages.filter((selectedLanguage) => selectedLanguage !== language);
+  }
+
+  function toggleDraftAutoDetect() {
+    draftAutoDetect = !draftAutoDetect;
+  }
+
+  async function saveLanguagePicker() {
     if (!settings || restarting) return;
 
-    const currentLanguages: AsrLanguageCode[] =
-      settings.model === 'medium_en_q8' ? ['en'] : settings.spokenLanguages;
-    const isSelected = currentLanguages.includes(language);
-    if (isSelected && currentLanguages.length === 1) return;
+    const spokenLanguages = draftLanguages.length > 0 ? draftLanguages : selectedLanguages;
+    const partial: Partial<AppSettings> = {
+      model: 'large_v3_turbo_q8',
+      spokenLanguages,
+      autoDetectLanguage: draftAutoDetect,
+    };
+    const didChange =
+      settings.model !== partial.model ||
+      settings.autoDetectLanguage !== draftAutoDetect ||
+      !sameLanguages(selectedLanguages, spokenLanguages);
 
-    const spokenLanguages = isSelected
-      ? currentLanguages.filter((selectedLanguage) => selectedLanguage !== language)
-      : [...currentLanguages, language];
-    const partial: Partial<AppSettings> = { spokenLanguages };
-    if (language !== 'en') partial.model = 'large_v3_turbo_q8';
+    languagePickerOpen = false;
+    if (!didChange) return;
 
     await patch(partial);
     await applyEngineChange('Languages updated');
@@ -155,43 +263,20 @@
           <div class="mt-4 border-t border-zinc-800 pt-4">
             <div class="flex items-center justify-between gap-3">
               <div class="min-w-0">
-                <p class="text-[13px] font-medium text-zinc-200">Languages I speak</p>
+                <p class="text-[13px] font-medium text-zinc-200">Languages</p>
                 <p class="truncate text-[11px] text-zinc-500">
-                  {selectedLanguageNames.join(', ')}
+                  {languageSummary}
                 </p>
               </div>
               <button
                 type="button"
-                on:click={() => (languagesOpen = !languagesOpen)}
+                on:click={openLanguagePicker}
                 disabled={restarting}
-                aria-expanded={languagesOpen}
-                class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[12px] font-medium text-zinc-200 transition-colors hover:bg-zinc-700 disabled:opacity-60"
+                class="inline-flex min-w-24 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-[12px] font-semibold text-zinc-100 transition-colors hover:bg-zinc-700 disabled:opacity-60"
               >
-                {languagesOpen ? 'Done' : 'Edit'}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5 transition-transform {languagesOpen ? 'rotate-180' : ''}" aria-hidden="true">
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
+                Change
               </button>
             </div>
-            {#if languagesOpen}
-              <div class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
-                {#each LANGUAGES as language}
-                  <button
-                    type="button"
-                    on:click={() => toggleLanguage(language.id)}
-                    disabled={restarting}
-                    class="rounded-lg border px-3 py-2 text-left text-[12px] font-medium transition-colors disabled:opacity-45 {selectedLanguages.includes(
-                      language.id
-                    )
-                      ? 'border-indigo-500 bg-indigo-500/10 text-zinc-100'
-                      : 'border-zinc-800 bg-zinc-950 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300'}"
-                    aria-pressed={selectedLanguages.includes(language.id)}
-                  >
-                    {language.name}
-                  </button>
-                {/each}
-              </div>
-            {/if}
           </div>
         {/if}
 
@@ -325,3 +410,153 @@
     </section>
   </div>
 </div>
+
+{#if languagePickerOpen}
+  <div class="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-5 py-5">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Choose languages"
+      class="flex max-h-[calc(100vh-40px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl shadow-black/60"
+    >
+      <div class="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-800 px-6 py-5">
+        <div>
+          <h2 class="text-lg font-semibold text-zinc-100">Languages</h2>
+          <p class="mt-1 text-[13px] text-zinc-500">Select the languages you speak most often.</p>
+        </div>
+        <div class="flex items-center gap-4">
+          <button
+            type="button"
+            role="switch"
+            aria-label="Auto-detect language"
+            aria-checked={draftAutoDetect}
+            on:click={toggleDraftAutoDetect}
+            class="flex items-center gap-2 text-[12px] font-semibold text-zinc-200"
+          >
+            Auto-detect
+            <span
+              class="relative h-7 w-12 rounded-full transition-colors {draftAutoDetect
+                ? 'bg-indigo-500'
+                : 'bg-zinc-700'}"
+            >
+              <span
+                class="absolute top-1 h-5 w-5 rounded-full bg-white transition-all {draftAutoDetect
+                  ? 'left-6'
+                  : 'left-1'}"
+              ></span>
+            </span>
+          </button>
+          <button
+            type="button"
+            on:click={closeLanguagePicker}
+            class="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-zinc-200"
+            aria-label="Close language picker"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" class="h-4 w-4" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_230px] overflow-hidden">
+        <div class="flex min-h-0 flex-col border-r border-zinc-800">
+          <label class="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-800 px-5 text-zinc-500">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              bind:this={languageSearchInput}
+              bind:value={languageSearch}
+              type="search"
+              placeholder="Search for any language"
+              class="h-full min-w-0 flex-1 bg-transparent text-[14px] text-zinc-100 outline-none placeholder:text-zinc-600"
+              disabled={draftAutoDetect}
+            />
+          </label>
+
+          <div class="scroll-area min-h-0 flex-1 overflow-y-auto p-4">
+            {#if filteredLanguages.length > 0}
+              <div class="grid grid-cols-2 gap-2.5 lg:grid-cols-3">
+                {#each filteredLanguages as language}
+                  <button
+                    type="button"
+                    on:click={() => toggleDraftLanguage(language.id)}
+                    disabled={draftAutoDetect}
+                    aria-pressed={draftLanguages.includes(language.id)}
+                    class="flex h-[72px] min-w-0 items-center gap-3 rounded-lg border px-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45 {draftLanguages.includes(
+                      language.id
+                    )
+                      ? 'border-indigo-400 bg-indigo-500/15 text-zinc-100'
+                      : 'border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800'}"
+                  >
+                    {#if language.flag}
+                      <span class="shrink-0 text-xl leading-none">{language.flag}</span>
+                    {/if}
+                    <span class="min-w-0">
+                      <span class="block truncate text-[13px] font-semibold">{language.name}</span>
+                      <span class="mt-0.5 block truncate text-[11px] text-zinc-500">{language.nativeName}</span>
+                    </span>
+                  </button>
+                {/each}
+              </div>
+            {:else}
+              <div class="flex h-full items-center justify-center text-[13px] text-zinc-500">
+                No languages found.
+              </div>
+            {/if}
+          </div>
+        </div>
+
+        <aside class="flex min-h-0 flex-col px-5 py-4">
+          <h3 class="shrink-0 text-[13px] font-semibold text-zinc-100">Selected</h3>
+          <div class="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
+            {#if draftAutoDetect}
+              <div class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-[12px] font-medium text-zinc-300">
+                All supported languages
+              </div>
+            {:else}
+              {#each draftLanguageOptions as language}
+                <div class="flex h-9 items-center gap-2 rounded-lg px-1 text-[12px] text-zinc-300">
+                  {#if language.flag}
+                    <span class="shrink-0 text-lg leading-none">{language.flag}</span>
+                  {/if}
+                  <span class="min-w-0 flex-1 truncate">{language.name}</span>
+                  <button
+                    type="button"
+                    on:click={() => removeDraftLanguage(language.id)}
+                    disabled={draftLanguages.length === 1}
+                    class="shrink-0 rounded px-1.5 py-1 text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-zinc-200 disabled:opacity-35"
+                    aria-label={`Remove ${language.name}`}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" class="h-3.5 w-3.5" aria-hidden="true">
+                      <path d="M5 12h14" />
+                    </svg>
+                  </button>
+                </div>
+              {/each}
+            {/if}
+          </div>
+          <div class="flex shrink-0 justify-end gap-2 pt-4">
+            <button
+              type="button"
+              on:click={closeLanguagePicker}
+              class="rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-zinc-300 transition-colors hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              on:click={saveLanguagePicker}
+              disabled={restarting}
+              class="rounded-lg bg-zinc-100 px-4 py-2 text-[12px] font-semibold text-zinc-950 transition-colors hover:bg-white disabled:opacity-60"
+            >
+              Save and close
+            </button>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+{/if}

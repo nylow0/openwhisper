@@ -247,6 +247,7 @@ class WhisperCppEngine(ASREngine):
         profile: str | None = None,
         timeout_seconds: int = 300,
         spoken_languages: tuple[str, ...] = ("en",),
+        auto_detect_language: bool = False,
     ) -> None:
         self._config_path = Path(config_path).resolve() if config_path is not None else default_config_path()
         self._asr_root = self._config_path.parents[1]
@@ -254,6 +255,7 @@ class WhisperCppEngine(ASREngine):
         self._profile_name = profile
         self._timeout_seconds = timeout_seconds
         self._spoken_languages = _normalize_spoken_languages(spoken_languages)
+        self._auto_detect_language = auto_detect_language
         self._selection: WhisperCppSelection | None = None
 
     @property
@@ -314,8 +316,12 @@ class WhisperCppEngine(ASREngine):
         with tempfile.TemporaryDirectory(prefix="openwhisper-asr-") as temp_dir:
             output_base = Path(temp_dir) / "transcript"
             start = time.perf_counter()
-            forced_language = self._choose_spoken_language(selection, audio, Path(temp_dir))
-            profile_args = force_whisper_cpp_language_args(selection.profile.args, forced_language)
+            if self._auto_detect_language:
+                forced_language: str | None = None
+                profile_args = force_whisper_cpp_language_args(selection.profile.args, "auto")
+            else:
+                forced_language = self._choose_spoken_language(selection, audio, Path(temp_dir))
+                profile_args = force_whisper_cpp_language_args(selection.profile.args, forced_language)
             command = [
                 str(selection.exe_path),
                 "-m",
@@ -345,9 +351,12 @@ class WhisperCppEngine(ASREngine):
 
             payload = _load_json(json_path)
             result = parse_whisper_cpp_payload(payload, processing_latency_ms=elapsed_ms)
-            if result.language is None:
+            if result.language is None and forced_language is not None:
                 result = replace(result, language=forced_language)
-            if result.language is not None and result.language not in self._spoken_languages:
+            if self._auto_detect_language and result.language is not None:
+                if result.language not in SUPPORTED_SPOKEN_LANGUAGES:
+                    raise WhisperCppError(f"whisper.cpp returned unsupported language: {result.language}")
+            elif result.language is not None and result.language not in self._spoken_languages:
                 raise WhisperCppError(
                     f"whisper.cpp returned language outside configured spoken languages: {result.language}"
                 )

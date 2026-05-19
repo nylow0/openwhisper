@@ -7,6 +7,9 @@
     type AsrLanguageCode,
     type AsrModel,
   } from '../shared/types';
+  import 'flag-icons/css/flag-icons.min.css';
+  import bashkortostanFlag from './flags/bashkortostan.svg';
+  import tatarstanFlag from './flags/tatarstan.svg';
 
   const api = window.api;
   const pushToast = getContext<(message: string) => void>('pushToast');
@@ -27,12 +30,23 @@
   type Language = (typeof SUPPORTED_ASR_LANGUAGES)[number];
   type LanguageOption = Language & {
     flag: string;
+    flagImage?: string;
     nativeName: string;
     searchText: string;
   };
 
+  // flag-icons code overrides for languages whose flag is a subdivision, not a country.
+  const FLAG_CODE_OVERRIDES: Partial<Record<AsrLanguageCode, string>> = {
+    cy: 'gb-wls', // Welsh → Wales
+  };
+  // Custom flag images for regions with no ISO country code in flag-icons.
+  const FLAG_IMAGE_OVERRIDES: Partial<Record<AsrLanguageCode, string>> = {
+    ba: bashkortostanFlag, // Bashkir → Bashkortostan
+    tt: tatarstanFlag, // Tatar → Tatarstan
+  };
+
   const LANGUAGE_FLAGS: Record<AsrLanguageCode, string> = {
-    en: '🇺🇸',
+    en: '🇬🇧',
     zh: '🇨🇳',
     de: '🇩🇪',
     es: '🇪🇸',
@@ -140,7 +154,8 @@
       const nativeName = nativeLanguageName(language.id, language.name);
       return {
         ...language,
-        flag: LANGUAGE_FLAGS[language.id],
+        flag: FLAG_CODE_OVERRIDES[language.id] ?? flagEmojiToCode(LANGUAGE_FLAGS[language.id]),
+        flagImage: FLAG_IMAGE_OVERRIDES[language.id],
         nativeName,
         searchText: `${language.name} ${nativeName} ${language.id}`.toLowerCase(),
       };
@@ -163,11 +178,6 @@
   $: selectedLanguageOptions = selectedLanguages
     .map((language) => LANGUAGE_BY_ID.get(language))
     .filter(isLanguageOption);
-  $: selectedLanguageNames = selectedLanguageOptions.map((language) => language.name);
-  $: languageSummary =
-    settings?.model === 'large_v3_turbo_q8' && settings.autoDetectLanguage
-      ? 'Auto-detect'
-      : selectedLanguageNames.join(', ');
   $: normalizedLanguageSearch = languageSearch.trim().toLowerCase();
   $: filteredLanguages = normalizedLanguageSearch
     ? LANGUAGES.filter((language) => language.searchText.includes(normalizedLanguageSearch))
@@ -234,6 +244,19 @@
     }
   }
 
+  /** Convert a flag emoji (two regional-indicator symbols) to its ISO 3166-1 country code. */
+  function flagEmojiToCode(flag: string): string {
+    const chars = [...flag];
+    if (chars.length !== 2) return '';
+    const base = 0x1f1e6;
+    return chars
+      .map((char) => {
+        const codePoint = char.codePointAt(0);
+        return codePoint ? String.fromCharCode(codePoint - base + 0x61) : '';
+      })
+      .join('');
+  }
+
   function sameLanguages(left: AsrLanguageCode[], right: AsrLanguageCode[]): boolean {
     return left.length === right.length && left.every((language, index) => language === right[index]);
   }
@@ -254,9 +277,18 @@
   }
 
   function toggleDraftLanguage(language: AsrLanguageCode) {
-    if (draftAutoDetect) return;
+    if (draftAutoDetect) {
+      // Picking a language exits auto-detect.
+      draftAutoDetect = false;
+      draftLanguages = [language];
+      return;
+    }
     const isSelected = draftLanguages.includes(language);
-    if (isSelected && draftLanguages.length === 1) return;
+    if (isSelected && draftLanguages.length === 1) {
+      // Unselecting the last language falls back to auto-detect.
+      draftAutoDetect = true;
+      return;
+    }
 
     draftLanguages = isSelected
       ? draftLanguages.filter((selectedLanguage) => selectedLanguage !== language)
@@ -264,7 +296,12 @@
   }
 
   function removeDraftLanguage(language: AsrLanguageCode) {
-    if (draftAutoDetect || draftLanguages.length === 1) return;
+    if (draftAutoDetect) return;
+    if (draftLanguages.length === 1) {
+      // Removing the last language falls back to auto-detect.
+      draftAutoDetect = true;
+      return;
+    }
     draftLanguages = draftLanguages.filter((selectedLanguage) => selectedLanguage !== language);
   }
 
@@ -354,9 +391,31 @@
             <div class="flex items-center justify-between gap-3">
               <div class="min-w-0">
                 <p class="text-[13px] font-medium text-zinc-200">Languages</p>
-                <p class="truncate text-[11px] text-zinc-500">
-                  {languageSummary}
-                </p>
+                <div class="mt-1.5 flex flex-wrap gap-1.5">
+                  {#if settings.autoDetectLanguage}
+                    <span class="inline-flex items-center rounded-md border border-indigo-500/40 bg-indigo-500/10 px-2 py-1 text-[11px] font-semibold text-indigo-200">
+                      Auto-detect
+                    </span>
+                  {:else}
+                    {#each selectedLanguageOptions as language}
+                      <span class="inline-flex items-center gap-1.5 rounded-md border border-indigo-500/40 bg-indigo-500/10 px-2 py-1 text-[11px] font-semibold text-indigo-100">
+                        {#if language.flagImage}
+                          <img
+                            src={language.flagImage}
+                            alt=""
+                            class="h-3 w-4 shrink-0 rounded-[2px] object-cover ring-1 ring-inset ring-white/15"
+                          />
+                        {:else if language.flag}
+                          <span
+                            class="fi fi-{language.flag} shrink-0 rounded-[2px] text-[12px] ring-1 ring-inset ring-white/15"
+                            aria-hidden="true"
+                          ></span>
+                        {/if}
+                        {language.name}
+                      </span>
+                    {/each}
+                  {/if}
+                </div>
               </div>
               <button
                 type="button"
@@ -507,12 +566,21 @@
       role="dialog"
       aria-modal="true"
       aria-label="Choose languages"
-      class="flex max-h-[calc(100vh-40px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl shadow-black/60"
+      class="flex max-h-[calc(100vh-280px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl shadow-black/60"
     >
       <div class="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-800 px-6 py-5">
         <div>
           <h2 class="text-lg font-semibold text-zinc-100">Languages</h2>
           <p class="mt-1 text-[13px] text-zinc-500">Select the languages you speak most often.</p>
+          {#if draftAutoDetect}
+            <p class="mt-1 text-[12px] text-zinc-600">
+              Auto-detect is on — pick a language to choose it manually.
+            </p>
+          {:else}
+            <p class="mt-1 text-[12px] text-zinc-600">
+              Tip: clear every language to switch back to auto-detect.
+            </p>
+          {/if}
         </div>
         <div class="flex items-center gap-4">
           <button
@@ -562,7 +630,6 @@
               type="search"
               placeholder="Search for any language"
               class="h-full min-w-0 flex-1 bg-transparent text-[14px] text-zinc-100 outline-none placeholder:text-zinc-600"
-              disabled={draftAutoDetect}
             />
           </label>
 
@@ -573,16 +640,23 @@
                   <button
                     type="button"
                     on:click={() => toggleDraftLanguage(language.id)}
-                    disabled={draftAutoDetect}
-                    aria-pressed={draftLanguages.includes(language.id)}
-                    class="flex h-[72px] min-w-0 items-center gap-3 rounded-lg border px-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45 {draftLanguages.includes(
-                      language.id
-                    )
+                    aria-pressed={!draftAutoDetect && draftLanguages.includes(language.id)}
+                    class="flex h-[58px] min-w-0 items-center gap-3 rounded-lg border px-3 text-left transition {!draftAutoDetect &&
+                    draftLanguages.includes(language.id)
                       ? 'border-indigo-400 bg-indigo-500/15 text-zinc-100'
-                      : 'border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800'}"
+                      : 'border-zinc-800 bg-zinc-900 text-zinc-300 opacity-80 hover:border-zinc-700 hover:bg-zinc-800 hover:opacity-100'}"
                   >
-                    {#if language.flag}
-                      <span class="shrink-0 text-xl leading-none">{language.flag}</span>
+                    {#if language.flagImage}
+                      <img
+                        src={language.flagImage}
+                        alt=""
+                        class="h-[21px] w-7 shrink-0 rounded-[3px] object-cover ring-1 ring-inset ring-white/15"
+                      />
+                    {:else if language.flag}
+                      <span
+                        class="fi fi-{language.flag} shrink-0 rounded-[3px] text-[21px] ring-1 ring-inset ring-white/15"
+                        aria-hidden="true"
+                      ></span>
                     {/if}
                     <span class="min-w-0">
                       <span class="block truncate text-[13px] font-semibold">{language.name}</span>
@@ -609,15 +683,23 @@
             {:else}
               {#each draftLanguageOptions as language}
                 <div class="flex h-9 items-center gap-2 rounded-lg px-1 text-[12px] text-zinc-300">
-                  {#if language.flag}
-                    <span class="shrink-0 text-lg leading-none">{language.flag}</span>
+                  {#if language.flagImage}
+                    <img
+                      src={language.flagImage}
+                      alt=""
+                      class="h-[15px] w-5 shrink-0 rounded-[2px] object-cover ring-1 ring-inset ring-white/15"
+                    />
+                  {:else if language.flag}
+                    <span
+                      class="fi fi-{language.flag} shrink-0 rounded-[2px] text-[15px] ring-1 ring-inset ring-white/15"
+                      aria-hidden="true"
+                    ></span>
                   {/if}
                   <span class="min-w-0 flex-1 truncate">{language.name}</span>
                   <button
                     type="button"
                     on:click={() => removeDraftLanguage(language.id)}
-                    disabled={draftLanguages.length === 1}
-                    class="shrink-0 rounded px-1.5 py-1 text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-zinc-200 disabled:opacity-35"
+                    class="shrink-0 rounded px-1.5 py-1 text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-zinc-200"
                     aria-label={`Remove ${language.name}`}
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" class="h-3.5 w-3.5" aria-hidden="true">

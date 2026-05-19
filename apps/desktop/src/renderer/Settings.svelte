@@ -31,13 +31,116 @@
     searchText: string;
   };
 
+  const LANGUAGE_FLAGS: Record<AsrLanguageCode, string> = {
+    en: '🇺🇸',
+    zh: '🇨🇳',
+    de: '🇩🇪',
+    es: '🇪🇸',
+    ru: '🇷🇺',
+    ko: '🇰🇷',
+    fr: '🇫🇷',
+    ja: '🇯🇵',
+    pt: '🇵🇹',
+    tr: '🇹🇷',
+    pl: '🇵🇱',
+    ca: '🇪🇸',
+    nl: '🇳🇱',
+    ar: '🇸🇦',
+    sv: '🇸🇪',
+    it: '🇮🇹',
+    id: '🇮🇩',
+    hi: '🇮🇳',
+    fi: '🇫🇮',
+    vi: '🇻🇳',
+    he: '🇮🇱',
+    uk: '🇺🇦',
+    el: '🇬🇷',
+    ms: '🇲🇾',
+    cs: '🇨🇿',
+    ro: '🇷🇴',
+    da: '🇩🇰',
+    hu: '🇭🇺',
+    ta: '🇮🇳',
+    no: '🇳🇴',
+    th: '🇹🇭',
+    ur: '🇵🇰',
+    hr: '🇭🇷',
+    bg: '🇧🇬',
+    lt: '🇱🇹',
+    la: '🇻🇦',
+    mi: '🇳🇿',
+    ml: '🇮🇳',
+    cy: '🇬🇧',
+    sk: '🇸🇰',
+    te: '🇮🇳',
+    fa: '🇮🇷',
+    lv: '🇱🇻',
+    bn: '🇮🇳',
+    sr: '🇷🇸',
+    az: '🇦🇿',
+    sl: '🇸🇮',
+    kn: '🇮🇳',
+    et: '🇪🇪',
+    mk: '🇲🇰',
+    br: '🇫🇷',
+    eu: '🇪🇸',
+    is: '🇮🇸',
+    hy: '🇦🇲',
+    ne: '🇳🇵',
+    mn: '🇲🇳',
+    bs: '🇧🇦',
+    kk: '🇰🇿',
+    sq: '🇦🇱',
+    sw: '🇹🇿',
+    gl: '🇪🇸',
+    mr: '🇮🇳',
+    pa: '🇮🇳',
+    si: '🇱🇰',
+    km: '🇰🇭',
+    sn: '🇿🇼',
+    yo: '🇳🇬',
+    so: '🇸🇴',
+    af: '🇿🇦',
+    oc: '🇫🇷',
+    ka: '🇬🇪',
+    be: '🇧🇾',
+    tg: '🇹🇯',
+    sd: '🇵🇰',
+    gu: '🇮🇳',
+    am: '🇪🇹',
+    yi: '🇮🇱',
+    lo: '🇱🇦',
+    uz: '🇺🇿',
+    fo: '🇫🇴',
+    ht: '🇭🇹',
+    ps: '🇦🇫',
+    tk: '🇹🇲',
+    nn: '🇳🇴',
+    mt: '🇲🇹',
+    sa: '🇮🇳',
+    lb: '🇱🇺',
+    my: '🇲🇲',
+    bo: '🇨🇳',
+    tl: '🇵🇭',
+    mg: '🇲🇬',
+    as: '🇮🇳',
+    tt: '🇷🇺',
+    haw: '🇺🇸',
+    ln: '🇨🇩',
+    ha: '🇳🇬',
+    ba: '🇷🇺',
+    jw: '🇮🇩',
+    su: '🇮🇩',
+    yue: '🇭🇰',
+  };
+
   const LANGUAGES: LanguageOption[] = [...SUPPORTED_ASR_LANGUAGES]
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((language) => {
       const nativeName = nativeLanguageName(language.id, language.name);
       return {
         ...language,
-        flag: languageFlag(language.id),
+        flag: LANGUAGE_FLAGS[language.id],
         nativeName,
         searchText: `${language.name} ${nativeName} ${language.id}`.toLowerCase(),
       };
@@ -119,19 +222,6 @@
 
   function isLanguageOption(value: LanguageOption | undefined): value is LanguageOption {
     return value !== undefined;
-  }
-
-  function languageFlag(language: AsrLanguageCode): string {
-    try {
-      const region = new Intl.Locale(language).maximize().region;
-      if (!region || region.length !== 2) return '';
-      const codePoints = [...region.toUpperCase()].map(
-        (letter) => 0x1f1e6 + letter.charCodeAt(0) - 65
-      );
-      return String.fromCodePoint(...codePoints);
-    } catch {
-      return '';
-    }
   }
 
   function nativeLanguageName(language: AsrLanguageCode, fallback: string): string {

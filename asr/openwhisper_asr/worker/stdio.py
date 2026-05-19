@@ -40,6 +40,8 @@ from openwhisper_asr.types import WordResult
 
 logger = logging.getLogger(__name__)
 
+SUPPORTED_SPOKEN_LANGUAGES = frozenset({"en", "pl", "de", "es", "fr", "it", "pt", "nl", "uk", "ru"})
+
 MOCK_SENTENCES = [
     "Hello world this is a test of the OpenWhisper dictation system",
     "The quick brown fox jumps over the lazy dog",
@@ -54,6 +56,7 @@ class WorkerConfig:
     engine_name: str
     model: str
     device: str
+    spoken_languages: tuple[str, ...]
     profile: str | None
     timeout_seconds: int
     sample_rate_hz: int
@@ -381,6 +384,7 @@ def default_worker_config() -> WorkerConfig:
         engine_name=os.environ.get("OPENWHISPER_ASR_ENGINE", "whispercpp").lower(),
         model=os.environ.get("OPENWHISPER_ASR_MODEL", "medium_en_q8"),
         device=os.environ.get("OPENWHISPER_ASR_DEVICE", "auto"),
+        spoken_languages=_spoken_languages_env("OPENWHISPER_ASR_LANGUAGES"),
         profile=_optional_env("OPENWHISPER_ASR_PROFILE"),
         timeout_seconds=_int_env("OPENWHISPER_ASR_TIMEOUT_SECONDS", 300),
         sample_rate_hz=_int_env("OPENWHISPER_RECORDING_SAMPLE_RATE_HZ", DEFAULT_SAMPLE_RATE_HZ),
@@ -405,6 +409,21 @@ def _int_env(name: str, fallback: int) -> int:
     except ValueError:
         logger.warning("Ignoring invalid integer env %s=%s", name, raw)
         return fallback
+
+
+def _spoken_languages_env(name: str) -> tuple[str, ...]:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return ("en",)
+
+    languages: list[str] = []
+    for item in raw.split(","):
+        language = item.strip().lower()
+        if language not in SUPPORTED_SPOKEN_LANGUAGES or language in languages:
+            continue
+        languages.append(language)
+
+    return tuple(languages) if languages else ("en",)
 
 
 def _device_arg(value: str | None) -> int | str | None:

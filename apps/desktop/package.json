@@ -16,7 +16,9 @@
     "electron:build": "tsc && bun run prepare:preload && vite build && electron-builder && bun run update:start-menu",
     "update:start-menu": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update-start-menu-shortcut.ps1"
   },
-  "dependencies": {},
+  "dependencies": {
+    "flag-icons": "^7.5.0"
+  },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^3.0.0",
     "@tsconfig/svelte": "^5.0.0",

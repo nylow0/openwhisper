@@ -4,6 +4,8 @@ import json
 from io import StringIO
 from pathlib import Path
 
+import pytest
+
 from openwhisper_asr.engine import ASREngine
 from openwhisper_asr.protocol import send_health_ok
 from openwhisper_asr.recording import RecordingError, RecordingResult
@@ -12,6 +14,7 @@ from openwhisper_asr.worker.stdio import (
     RecordingDictationHandler,
     WorkerConfig,
     WorkerWriter,
+    default_worker_config,
     handle_message,
     run_worker,
 )
@@ -144,11 +147,46 @@ def test_dictation_start_reports_audio_error_when_microphone_cannot_start() -> N
     }
 
 
+def test_default_worker_config_defaults_spoken_languages_to_english(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENWHISPER_ASR_LANGUAGES", raising=False)
+
+    config = default_worker_config()
+
+    assert config.spoken_languages == ("en",)
+
+
+def test_default_worker_config_treats_empty_spoken_languages_as_english(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENWHISPER_ASR_LANGUAGES", "  ")
+
+    config = default_worker_config()
+
+    assert config.spoken_languages == ("en",)
+
+
+def test_default_worker_config_normalizes_spoken_languages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENWHISPER_ASR_LANGUAGES", " PL, en,pl, DE ,zz,EN ")
+
+    config = default_worker_config()
+
+    assert config.spoken_languages == ("pl", "en", "de")
+
+
+def test_default_worker_config_falls_back_to_english_when_all_spoken_languages_are_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENWHISPER_ASR_LANGUAGES", "ja, no, unknown")
+
+    config = default_worker_config()
+
+    assert config.spoken_languages == ("en",)
+
+
 def _worker_config() -> WorkerConfig:
     return WorkerConfig(
         engine_name="whispercpp",
         model="medium",
         device="cpu",
+        spoken_languages=("en",),
         profile=None,
         timeout_seconds=1,
         sample_rate_hz=16_000,

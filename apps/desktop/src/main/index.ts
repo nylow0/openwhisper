@@ -249,6 +249,7 @@ function rustEnv(): NodeJS.ProcessEnv {
     ...process.env,
     OPENWHISPER_ASR_MODEL: settings.model,
     OPENWHISPER_ASR_DEVICE: settings.device,
+    OPENWHISPER_ASR_LANGUAGES: settings.spokenLanguages.join(','),
   };
 }
 

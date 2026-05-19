@@ -102,6 +102,24 @@ def parse_whisper_cpp_payload(payload: JsonDict, processing_latency_ms: int) -> 
     )
 
 
+def remove_whisper_cpp_language_args(args: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    cleaned: list[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in {"-l", "--language"}:
+            skip_next = True
+            continue
+        cleaned.append(arg)
+    return tuple(cleaned)
+
+
+def force_whisper_cpp_language_args(args: tuple[str, ...] | list[str], language: str) -> tuple[str, ...]:
+    return (*remove_whisper_cpp_language_args(args), "-l", language)
+
+
 class WhisperCppEngine(ASREngine):
     """Batch transcription engine backed by whisper.cpp's CLI."""
 

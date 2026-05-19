@@ -12,7 +12,7 @@ import {
 } from './ipc.js';
 import { createAppIcon } from './tray-icon.js';
 import { loadJson, saveJson } from './store.js';
-import type { AppSettings, AsrLanguageCode } from '../shared/types';
+import { SUPPORTED_ASR_LANGUAGES, type AppSettings, type AsrLanguageCode } from '../shared/types';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,18 +25,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   showWindowOnLaunch: true,
 };
-const SUPPORTED_SPOKEN_LANGUAGES = new Set<AsrLanguageCode>([
-  'en',
-  'pl',
-  'de',
-  'es',
-  'fr',
-  'it',
-  'pt',
-  'nl',
-  'uk',
-  'ru',
-]);
+const SUPPORTED_SPOKEN_LANGUAGES = new Set<AsrLanguageCode>(
+  SUPPORTED_ASR_LANGUAGES.map((language) => language.id)
+);
 const WINDOWS_APP_USER_MODEL_ID = 'com.openwhisper.desktop';
 type StoredSettings = Partial<Omit<AppSettings, 'model' | 'spokenLanguages'>> & {
   model?: unknown;

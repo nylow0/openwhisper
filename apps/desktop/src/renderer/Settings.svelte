@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext, onMount } from 'svelte';
-  import type { AppSettings, AsrDevice, AsrModel } from '../shared/types';
+  import type { AppSettings, AsrDevice, AsrLanguageCode, AsrModel } from '../shared/types';
 
   const api = window.api;
   const pushToast = getContext<(message: string) => void>('pushToast');
@@ -17,9 +17,24 @@
     { id: 'cpu', name: 'CPU' },
     { id: 'gpu', name: 'GPU' },
   ];
+  const LANGUAGES: Array<{ id: AsrLanguageCode; name: string }> = [
+    { id: 'en', name: 'English' },
+    { id: 'pl', name: 'Polish' },
+    { id: 'de', name: 'German' },
+    { id: 'es', name: 'Spanish' },
+    { id: 'fr', name: 'French' },
+    { id: 'it', name: 'Italian' },
+    { id: 'pt', name: 'Portuguese' },
+    { id: 'nl', name: 'Dutch' },
+    { id: 'uk', name: 'Ukrainian' },
+    { id: 'ru', name: 'Russian' },
+  ];
 
   let settings: AppSettings | null = null;
   let restarting = false;
+
+  $: selectedLanguages =
+    settings?.model === 'medium_en_q8' ? ['en'] : settings?.spokenLanguages ?? ['en'];
 
   onMount(async () => {
     if (!api) return;
@@ -60,6 +75,25 @@
     if (!settings || restarting || settings.device === device) return;
     await patch({ device });
     await applyEngineChange('Compute device updated');
+  }
+
+  async function toggleLanguage(language: AsrLanguageCode) {
+    if (!settings || restarting) return;
+    if (settings.model === 'medium_en_q8' && language !== 'en') return;
+
+    const currentLanguages: AsrLanguageCode[] =
+      settings.model === 'medium_en_q8' ? ['en'] : settings.spokenLanguages;
+    const isSelected = currentLanguages.includes(language);
+    if (isSelected && currentLanguages.length === 1) return;
+
+    const spokenLanguages = isSelected
+      ? currentLanguages.filter((selectedLanguage) => selectedLanguage !== language)
+      : [...currentLanguages, language];
+    const partial: Partial<AppSettings> = { spokenLanguages };
+    if (language !== 'en') partial.model = 'large_v3_turbo_q8';
+
+    await patch(partial);
+    await applyEngineChange('Languages updated');
   }
 </script>
 
@@ -118,6 +152,30 @@
           </div>
         </div>
 
+        <div class="mt-4">
+          <div>
+            <p class="text-[13px] font-medium text-zinc-200">Languages I speak</p>
+            <p class="text-[11px] text-zinc-500">Choose every language you dictate in.</p>
+          </div>
+          <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {#each LANGUAGES as language}
+              <button
+                type="button"
+                on:click={() => toggleLanguage(language.id)}
+                disabled={restarting || (settings?.model === 'medium_en_q8' && language.id !== 'en')}
+                class="rounded-lg border px-3 py-2 text-left text-[12px] font-medium transition-colors disabled:opacity-45 {selectedLanguages.includes(
+                  language.id
+                )
+                  ? 'border-indigo-500 bg-indigo-500/10 text-zinc-100'
+                  : 'border-zinc-800 bg-zinc-950 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300'}"
+                aria-pressed={selectedLanguages.includes(language.id)}
+              >
+                {language.name}
+              </button>
+            {/each}
+          </div>
+        </div>
+
         <p class="mt-3 flex items-center gap-1.5 text-[11px] text-zinc-500">
           {#if restarting}
             <svg viewBox="0 0 24 24" fill="none" class="h-3.5 w-3.5 animate-spin text-indigo-400" aria-hidden="true">
@@ -130,7 +188,7 @@
               <circle cx="12" cy="12" r="9" />
               <path d="M12 11v5M12 8h.01" />
             </svg>
-            Changing the model or device restarts the speech engine.
+            Changing the model, device, or language restarts the speech engine.
           {/if}
         </p>
       </div>

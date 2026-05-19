@@ -59,12 +59,15 @@ export type Event =
 
 export type AsrModel = 'medium_en_q8' | 'large_v3_turbo_q8';
 export type AsrDevice = 'auto' | 'cpu' | 'gpu';
+export type AsrLanguageCode = 'en' | 'pl' | 'de' | 'es' | 'fr' | 'it' | 'pt' | 'nl' | 'uk' | 'ru';
 
 export interface AppSettings {
   /** whisper.cpp model key passed to the ASR worker. */
   model: AsrModel;
   /** Compute device preference for transcription. */
   device: AsrDevice;
+  /** Spoken languages enabled for transcription. */
+  spokenLanguages: AsrLanguageCode[];
   /** Start OpenWhisper automatically when the user signs in. */
   launchAtLogin: boolean;
   /** Open the main window on launch (vs. starting only in the tray). */

@@ -12,7 +12,7 @@ import {
 } from './ipc.js';
 import { createAppIcon } from './tray-icon.js';
 import { loadJson, saveJson } from './store.js';
-import type { AppSettings } from '../shared/types';
+import type { AppSettings, AsrLanguageCode } from '../shared/types';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,11 +21,27 @@ const SETTINGS_FILE = 'settings.json';
 const DEFAULT_SETTINGS: AppSettings = {
   model: 'medium_en_q8',
   device: 'auto',
+  spokenLanguages: ['en'],
   launchAtLogin: false,
   showWindowOnLaunch: true,
 };
+const SUPPORTED_SPOKEN_LANGUAGES = new Set<AsrLanguageCode>([
+  'en',
+  'pl',
+  'de',
+  'es',
+  'fr',
+  'it',
+  'pt',
+  'nl',
+  'uk',
+  'ru',
+]);
 const WINDOWS_APP_USER_MODEL_ID = 'com.openwhisper.desktop';
-type StoredSettings = Partial<Omit<AppSettings, 'model'>> & { model?: unknown };
+type StoredSettings = Partial<Omit<AppSettings, 'model' | 'spokenLanguages'>> & {
+  model?: unknown;
+  spokenLanguages?: unknown;
+};
 
 let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
@@ -38,11 +54,35 @@ function isAsrModel(model: unknown): model is AppSettings['model'] {
   return model === 'medium_en_q8' || model === 'large_v3_turbo_q8';
 }
 
+function isAsrLanguageCode(language: string): language is AsrLanguageCode {
+  return SUPPORTED_SPOKEN_LANGUAGES.has(language as AsrLanguageCode);
+}
+
+function normalizeSpokenLanguages(value: unknown, model: AppSettings['model']): AsrLanguageCode[] {
+  if (model === 'medium_en_q8') return ['en'];
+  if (!Array.isArray(value)) return DEFAULT_SETTINGS.spokenLanguages;
+
+  const languages: AsrLanguageCode[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+
+    const language = item.toLowerCase();
+    if (!isAsrLanguageCode(language) || languages.includes(language)) continue;
+
+    languages.push(language);
+  }
+
+  return languages.length > 0 ? languages : DEFAULT_SETTINGS.spokenLanguages;
+}
+
 function normalizeSettings(storedSettings: StoredSettings): AppSettings {
   const nextSettings = { ...DEFAULT_SETTINGS, ...storedSettings };
+  const model = isAsrModel(nextSettings.model) ? nextSettings.model : DEFAULT_SETTINGS.model;
+
   return {
     ...nextSettings,
-    model: isAsrModel(nextSettings.model) ? nextSettings.model : DEFAULT_SETTINGS.model,
+    model,
+    spokenLanguages: normalizeSpokenLanguages(nextSettings.spokenLanguages, model),
   };
 }
 

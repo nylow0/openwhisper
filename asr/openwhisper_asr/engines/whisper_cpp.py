@@ -104,6 +104,14 @@ def parse_whisper_cpp_payload(payload: JsonDict, processing_latency_ms: int) -> 
     )
 
 
+def calculate_whisper_cpp_language_score(payload: JsonDict) -> float | None:
+    probabilities: list[float] = []
+    _collect_token_probabilities(payload, probabilities)
+    if not probabilities:
+        return None
+    return sum(probabilities) / len(probabilities)
+
+
 def remove_whisper_cpp_language_args(args: tuple[str, ...] | list[str]) -> tuple[str, ...]:
     cleaned: list[str] = []
     skip_next = False
@@ -120,6 +128,11 @@ def remove_whisper_cpp_language_args(args: tuple[str, ...] | list[str]) -> tuple
 
 def force_whisper_cpp_language_args(args: tuple[str, ...] | list[str], language: str) -> tuple[str, ...]:
     return (*remove_whisper_cpp_language_args(args), "-l", language)
+
+
+def short_whisper_cpp_scoring_args(args: tuple[str, ...] | list[str], language: str) -> tuple[str, ...]:
+    cleaned = _remove_whisper_cpp_duration_args(force_whisper_cpp_language_args(args, language))
+    return (*cleaned, "-d", "6000", "-ojf")
 
 
 class WhisperCppEngine(ASREngine):
@@ -197,12 +210,9 @@ class WhisperCppEngine(ASREngine):
 
         with tempfile.TemporaryDirectory(prefix="openwhisper-asr-") as temp_dir:
             output_base = Path(temp_dir) / "transcript"
-            forced_language = self._spoken_languages[0] if len(self._spoken_languages) == 1 else None
-            profile_args = (
-                force_whisper_cpp_language_args(selection.profile.args, forced_language)
-                if forced_language is not None
-                else selection.profile.args
-            )
+            start = time.perf_counter()
+            forced_language = self._choose_spoken_language(selection, audio, Path(temp_dir))
+            profile_args = force_whisper_cpp_language_args(selection.profile.args, forced_language)
             command = [
                 str(selection.exe_path),
                 "-m",
@@ -214,30 +224,7 @@ class WhisperCppEngine(ASREngine):
                 str(output_base),
             ]
 
-            start = time.perf_counter()
-            if os.name == "nt":
-                # Prevent console window flash on Windows when the worker is
-                # running as a background / GUI-launched process.
-                completed = subprocess.run(
-                    command,
-                    cwd=str(self._asr_root),
-                    env=self._subprocess_env(selection),
-                    capture_output=True,
-                    text=True,
-                    timeout=self._timeout_seconds,
-                    check=False,
-                    creationflags=0x08000000,  # CREATE_NO_WINDOW
-                )
-            else:
-                completed = subprocess.run(
-                    command,
-                    cwd=str(self._asr_root),
-                    env=self._subprocess_env(selection),
-                    capture_output=True,
-                    text=True,
-                    timeout=self._timeout_seconds,
-                    check=False,
-                )
+            completed = self._run_whisper_cpp(command, selection, self._timeout_seconds)
             elapsed_ms = int((time.perf_counter() - start) * 1000)
 
             if completed.returncode != 0:
@@ -265,6 +252,78 @@ class WhisperCppEngine(ASREngine):
 
     def transcribe_chunk(self, audio_pcm: bytes, sample_rate_hz: int) -> TranscriptionResult | None:
         return None
+
+    def _choose_spoken_language(self, selection: WhisperCppSelection, audio: Path, temp_dir: Path) -> str:
+        if len(self._spoken_languages) == 1:
+            return self._spoken_languages[0]
+
+        best_language = self._spoken_languages[0]
+        best_score: float | None = None
+        for language in self._spoken_languages:
+            score = self._score_spoken_language(selection, audio, temp_dir, language)
+            if score is not None and (best_score is None or score > best_score):
+                best_language = language
+                best_score = score
+        return best_language
+
+    def _score_spoken_language(
+        self,
+        selection: WhisperCppSelection,
+        audio: Path,
+        temp_dir: Path,
+        language: str,
+    ) -> float | None:
+        output_base = temp_dir / f"language-score-{language}"
+        command = [
+            str(selection.exe_path),
+            "-m",
+            str(selection.model_path),
+            "-f",
+            str(audio),
+            *short_whisper_cpp_scoring_args(selection.profile.args, language),
+            "-of",
+            str(output_base),
+        ]
+        try:
+            completed = self._run_whisper_cpp(command, selection, min(self._timeout_seconds, 60))
+        except subprocess.TimeoutExpired:
+            return None
+        if completed.returncode != 0:
+            return None
+
+        json_path = output_base.with_suffix(".json")
+        if not json_path.is_file():
+            return None
+        return calculate_whisper_cpp_language_score(_load_json(json_path))
+
+    def _run_whisper_cpp(
+        self,
+        command: list[str],
+        selection: WhisperCppSelection,
+        timeout_seconds: int,
+    ) -> subprocess.CompletedProcess[str]:
+        if os.name == "nt":
+            # Prevent console window flash on Windows when the worker is
+            # running as a background / GUI-launched process.
+            return subprocess.run(
+                command,
+                cwd=str(self._asr_root),
+                env=self._subprocess_env(selection),
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+            )
+        return subprocess.run(
+            command,
+            cwd=str(self._asr_root),
+            env=self._subprocess_env(selection),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
 
     def _candidate_profile_names(self, model: str | None, device: str) -> list[str]:
         model_key = _normalize_model_key(model)
@@ -404,6 +463,32 @@ def _normalize_spoken_languages(spoken_languages: tuple[str, ...]) -> tuple[str,
             continue
         languages.append(language)
     return tuple(languages) if languages else ("en",)
+
+
+def _remove_whisper_cpp_duration_args(args: tuple[str, ...]) -> tuple[str, ...]:
+    cleaned: list[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in {"-d", "--duration"}:
+            skip_next = True
+            continue
+        cleaned.append(arg)
+    return tuple(cleaned)
+
+
+def _collect_token_probabilities(value: object, probabilities: list[float]) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in {"p", "prob", "probability"} and isinstance(item, int | float):
+                probabilities.append(float(item))
+            else:
+                _collect_token_probabilities(item, probabilities)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_token_probabilities(item, probabilities)
 
 
 def _load_json(path: Path) -> JsonDict:

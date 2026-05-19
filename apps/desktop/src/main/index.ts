@@ -12,7 +12,7 @@ import {
 } from './ipc.js';
 import { createAppIcon } from './tray-icon.js';
 import { loadJson, saveJson } from './store.js';
-import { SUPPORTED_ASR_LANGUAGES, type AppSettings, type AsrLanguageCode } from '../shared/types';
+import { SUPPORTED_ASR_LANGUAGES, type AppSettings, type AsrLanguageCode } from '../shared/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

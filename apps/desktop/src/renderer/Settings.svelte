@@ -79,7 +79,6 @@
 
   async function toggleLanguage(language: AsrLanguageCode) {
     if (!settings || restarting) return;
-    if (settings.model === 'medium_en_q8' && language !== 'en') return;
 
     const currentLanguages: AsrLanguageCode[] =
       settings.model === 'medium_en_q8' ? ['en'] : settings.spokenLanguages;
@@ -162,7 +161,7 @@
               <button
                 type="button"
                 on:click={() => toggleLanguage(language.id)}
-                disabled={restarting || (settings?.model === 'medium_en_q8' && language.id !== 'en')}
+                disabled={restarting}
                 class="rounded-lg border px-3 py-2 text-left text-[12px] font-medium transition-colors disabled:opacity-45 {selectedLanguages.includes(
                   language.id
                 )

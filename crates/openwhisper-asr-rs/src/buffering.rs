@@ -79,6 +79,22 @@ impl WindowPolicy {
     pub fn step_samples(&self) -> usize {
         self.samples_for_ms(self.step_ms)
     }
+
+    pub fn with_env_overrides(mut self) -> Self {
+        override_ms("OPENWHISPER_ASR_STREAM_STEP_MS", &mut self.step_ms);
+        override_ms("OPENWHISPER_ASR_STREAM_LENGTH_MS", &mut self.length_ms);
+        override_ms("OPENWHISPER_ASR_STREAM_KEEP_MS", &mut self.keep_ms);
+        self
+    }
+}
+
+fn override_ms(env_name: &str, target: &mut u32) {
+    if let Ok(value) = std::env::var(env_name) {
+        match value.parse::<u32>() {
+            Ok(ms) if ms > 0 => *target = ms,
+            _ => log::warn!("Ignoring invalid {env_name}={value}"),
+        }
+    }
 }
 
 #[cfg(test)]

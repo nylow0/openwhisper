@@ -39,6 +39,11 @@
         "rms_threshold": 0.015,
         "silence_ms": 900
       },
+      "streaming": {
+        "step_ms": 500,
+        "length_ms": 5000,
+        "keep_ms": 500
+      },
       "benchmark": {
         "wer_percent": 2.19,
         "first_result_seconds": 2.71,
@@ -56,6 +61,11 @@
       "vad": {
         "rms_threshold": 0.015,
         "silence_ms": 900
+      },
+      "streaming": {
+        "step_ms": 500,
+        "length_ms": 5000,
+        "keep_ms": 500
       },
       "benchmark": {
         "wer_percent": null,
@@ -75,6 +85,11 @@
         "rms_threshold": 0.015,
         "silence_ms": 900
       },
+      "streaming": {
+        "step_ms": 500,
+        "length_ms": 5000,
+        "keep_ms": 500
+      },
       "benchmark": {
         "wer_percent": 2.39,
         "first_result_seconds": 1.25,
@@ -92,6 +107,11 @@
       "vad": {
         "rms_threshold": 0.015,
         "silence_ms": 900
+      },
+      "streaming": {
+        "step_ms": 500,
+        "length_ms": 5000,
+        "keep_ms": 500
       },
       "benchmark": {
         "wer_percent": 2.39,

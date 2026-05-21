@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -212,12 +213,20 @@ where
                 recoverable: true,
             };
         };
-        match engine.load_model(
-            model.as_deref().unwrap_or(&default_model),
-            device.as_deref().unwrap_or(&default_device),
-        ) {
+        let model_name = model.as_deref().unwrap_or(&default_model);
+        let device_name = device.as_deref().unwrap_or(&default_device);
+        let load_start = Instant::now();
+        match engine.load_model(model_name, device_name) {
             Ok(info) => {
                 self.is_model_loaded = true;
+                log::info!(
+                    "ASR model setup complete: model={} requested_device={} selected_device={} setup_ms={} profile_memory_mb={}",
+                    model_name,
+                    device_name,
+                    info.device,
+                    load_start.elapsed().as_millis(),
+                    info.memory_mb
+                );
                 WorkerEvent::ModelLoaded {
                     device: info.device,
                     memory_mb: info.memory_mb,

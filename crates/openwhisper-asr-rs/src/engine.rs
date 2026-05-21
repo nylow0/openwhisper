@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::buffering::WindowPolicy;
 use crate::protocol::WordResult;
 use crate::vad::VadConfig;
 
@@ -23,6 +24,10 @@ pub trait AsrEngine: Send {
 
     fn vad_config(&self) -> VadConfig {
         VadConfig::default().with_env_overrides()
+    }
+
+    fn window_policy(&self) -> WindowPolicy {
+        WindowPolicy::dictation_default().with_env_overrides()
     }
 }
 
@@ -101,6 +106,7 @@ struct WhisperCppSelection {
     args: Vec<String>,
     memory_mb: f64,
     vad: VadConfig,
+    window: WindowPolicy,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +138,8 @@ struct ProfileConfig {
     benchmark: BenchmarkConfig,
     #[serde(default)]
     vad: ProfileVadConfig,
+    #[serde(default)]
+    streaming: ProfileStreamingConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -143,6 +151,26 @@ struct BenchmarkConfig {
 struct ProfileVadConfig {
     rms_threshold: Option<f32>,
     silence_ms: Option<u32>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ProfileStreamingConfig {
+    step_ms: Option<u32>,
+    length_ms: Option<u32>,
+    keep_ms: Option<u32>,
+}
+
+impl ProfileStreamingConfig {
+    fn into_window_policy(self) -> WindowPolicy {
+        let default = WindowPolicy::dictation_default();
+        WindowPolicy {
+            step_ms: self.step_ms.unwrap_or(default.step_ms),
+            length_ms: self.length_ms.unwrap_or(default.length_ms),
+            keep_ms: self.keep_ms.unwrap_or(default.keep_ms),
+            ..default
+        }
+        .with_env_overrides()
+    }
 }
 
 impl ProfileVadConfig {
@@ -304,6 +332,7 @@ impl AsrEngine for WhisperCppEngine {
             args: profile.args.clone(),
             memory_mb,
             vad: profile.vad.into_vad_config(),
+            window: profile.streaming.into_window_policy(),
         });
 
         Ok(ModelLoadInfo {
@@ -371,6 +400,14 @@ impl AsrEngine for WhisperCppEngine {
             .as_ref()
             .map(|selection| selection.vad)
             .unwrap_or_default()
+            .with_env_overrides()
+    }
+
+    fn window_policy(&self) -> WindowPolicy {
+        self.selection
+            .as_ref()
+            .map(|selection| selection.window)
+            .unwrap_or_else(WindowPolicy::dictation_default)
             .with_env_overrides()
     }
 }
@@ -540,13 +577,22 @@ mod tests {
             "vad": {
                 "rms_threshold": 0.04,
                 "silence_ms": 650
+            },
+            "streaming": {
+                "step_ms": 750,
+                "length_ms": 4000,
+                "keep_ms": 250
             }
         }))
         .unwrap();
         let vad = profile.vad.into_vad_config();
+        let window = profile.streaming.into_window_policy();
 
         assert_eq!(vad.rms_threshold, 0.04);
         assert_eq!(vad.silence_ms, 650);
+        assert_eq!(window.step_ms, 750);
+        assert_eq!(window.length_ms, 4_000);
+        assert_eq!(window.keep_ms, 250);
     }
 
     #[test]

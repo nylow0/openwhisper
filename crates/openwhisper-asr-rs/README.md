@@ -44,3 +44,20 @@ text. Worker file transcription can use the same backend by setting:
 ```powershell
 $env:OPENWHISPER_ASR_ENGINE = "whispercpp"
 ```
+
+Measure the Rust-controlled backend against a WAV file:
+
+```powershell
+cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs -- bench .\sample.wav --device cpu --model medium_en_q8
+```
+
+The benchmark prints JSON with WAV duration, backend setup time, decode wall
+time, realtime factor, selected profile memory, and process CPU/working-set
+samples when the platform exposes them. Live streaming logs also report the
+configured window policy, first partial latency, silence final latency, decode
+wall time, and stop-time CPU and memory samples.
+
+whisper.cpp profiles may set `streaming.step_ms`, `streaming.length_ms`, and
+`streaming.keep_ms`. For local measurements those values can be overridden with
+`OPENWHISPER_ASR_STREAM_STEP_MS`, `OPENWHISPER_ASR_STREAM_LENGTH_MS`, and
+`OPENWHISPER_ASR_STREAM_KEEP_MS`.

@@ -1,16 +1,19 @@
 mod audio_capture;
 mod buffering;
 mod engine;
+mod performance;
 mod protocol;
 mod streaming;
 mod vad;
 mod worker;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use anyhow::Context;
 use audio_capture::record_default_input_to_wav;
 use engine::{AsrEngine, WhisperCppEngine};
+use performance::{audio_duration_ms, BenchReport, ProcessSample};
 
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -25,6 +28,11 @@ fn main() -> anyhow::Result<()> {
             model,
             device,
         } => transcribe_file(&path, &model, &device),
+        Command::Bench {
+            path,
+            model,
+            device,
+        } => bench_file(&path, &model, &device),
     }
 }
 
@@ -39,6 +47,11 @@ enum Command {
         model: String,
         device: String,
     },
+    Bench {
+        path: PathBuf,
+        model: String,
+        device: String,
+    },
 }
 
 fn parse_args(args: Vec<String>) -> anyhow::Result<Command> {
@@ -49,6 +62,7 @@ fn parse_args(args: Vec<String>) -> anyhow::Result<Command> {
     match args[0].as_str() {
         "record" => parse_record_args(&args),
         "transcribe" => parse_transcribe_args(&args),
+        "bench" => parse_bench_args(&args),
         other => anyhow::bail!("unsupported command: {other}"),
     }
 }
@@ -83,10 +97,29 @@ fn parse_record_args(args: &[String]) -> anyhow::Result<Command> {
 }
 
 fn parse_transcribe_args(args: &[String]) -> anyhow::Result<Command> {
+    parse_audio_engine_args(args, "transcribe").map(|(path, model, device)| Command::Transcribe {
+        path,
+        model,
+        device,
+    })
+}
+
+fn parse_bench_args(args: &[String]) -> anyhow::Result<Command> {
+    parse_audio_engine_args(args, "bench").map(|(path, model, device)| Command::Bench {
+        path,
+        model,
+        device,
+    })
+}
+
+fn parse_audio_engine_args(
+    args: &[String],
+    command_name: &str,
+) -> anyhow::Result<(PathBuf, String, String)> {
     let path = args
         .get(1)
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("transcribe requires an input audio path"))?;
+        .ok_or_else(|| anyhow::anyhow!("{command_name} requires an input audio path"))?;
     let mut model = "medium_en_q8".to_string();
     let mut device = "auto".to_string();
     let mut index = 2;
@@ -107,23 +140,51 @@ fn parse_transcribe_args(args: &[String]) -> anyhow::Result<Command> {
                     .to_string();
                 index += 2;
             }
-            other => anyhow::bail!("unsupported transcribe argument: {other}"),
+            other => anyhow::bail!("unsupported {command_name} argument: {other}"),
         }
     }
 
-    Ok(Command::Transcribe {
-        path,
-        model,
-        device,
-    })
+    Ok((path, model, device))
 }
 
-fn transcribe_file(path: &PathBuf, model: &str, device: &str) -> anyhow::Result<()> {
+fn transcribe_file(path: &Path, model: &str, device: &str) -> anyhow::Result<()> {
     let mut engine = WhisperCppEngine::default();
     engine.load_model(model, device)?;
     let result = engine.transcribe_file(path)?;
     println!("{}", result.text);
     Ok(())
+}
+
+fn bench_file(path: &Path, model: &str, device: &str) -> anyhow::Result<()> {
+    let process_before = ProcessSample::capture();
+    let mut engine = WhisperCppEngine::default();
+    let setup_start = Instant::now();
+    let model_info = engine.load_model(model, device)?;
+    let model_setup_ms = elapsed_ms(setup_start);
+
+    let decode_start = Instant::now();
+    let result = engine.transcribe_file(path)?;
+    let decode_wall_ms = elapsed_ms(decode_start);
+    let process_after = ProcessSample::capture();
+    let audio_ms = audio_duration_ms(path)?;
+    let report = BenchReport::new(
+        path,
+        model,
+        model_info.device,
+        model_setup_ms,
+        audio_ms,
+        decode_wall_ms,
+        result.processing_latency_ms,
+        model_info.memory_mb,
+        process_before,
+        process_after,
+    );
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn elapsed_ms(start: Instant) -> u32 {
+    start.elapsed().as_millis().min(u32::MAX as u128) as u32
 }
 
 #[cfg(test)]
@@ -181,6 +242,32 @@ mod tests {
                 assert_eq!(device, "cpu");
             }
             _ => panic!("expected transcribe command"),
+        }
+    }
+
+    #[test]
+    fn bench_command_reuses_model_and_device_options_for_repeatable_measurements() {
+        let command = parse_args(vec![
+            "bench".to_string(),
+            "sample.wav".to_string(),
+            "--model".to_string(),
+            "medium_en_q8".to_string(),
+            "--device".to_string(),
+            "cpu".to_string(),
+        ])
+        .unwrap();
+
+        match command {
+            Command::Bench {
+                path,
+                model,
+                device,
+            } => {
+                assert_eq!(path, PathBuf::from("sample.wav"));
+                assert_eq!(model, "medium_en_q8");
+                assert_eq!(device, "cpu");
+            }
+            _ => panic!("expected bench command"),
         }
     }
 }

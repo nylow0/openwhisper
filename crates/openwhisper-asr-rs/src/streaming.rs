@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::audio_capture::{write_debug_wav, AudioChunkReceiver, WORKER_SAMPLE_RATE_HZ};
 use crate::buffering::{RingPcmBuffer, WindowPolicy};
 use crate::engine::{AsrEngine, Transcription};
+use crate::performance::ProcessSample;
 use crate::protocol::WorkerEvent;
 use crate::vad::{is_speech, VadConfig};
 
@@ -20,15 +21,9 @@ impl StreamingSession {
         let (event_tx, events) = channel();
         let (stop_tx, stop_rx) = channel();
         let vad = engine.vad_config();
+        let policy = engine.window_policy();
         let worker = thread::spawn(move || {
-            run_streaming_decoder(
-                engine,
-                samples,
-                stop_rx,
-                event_tx,
-                WindowPolicy::dictation_default(),
-                vad,
-            )
+            run_streaming_decoder(engine, samples, stop_rx, event_tx, policy, vad)
         });
 
         Self {
@@ -58,10 +53,26 @@ fn run_streaming_decoder(
     policy: WindowPolicy,
     vad: VadConfig,
 ) -> Box<dyn AsrEngine> {
+    let session_start = Instant::now();
+    let process_start = ProcessSample::capture();
     let mut ring = RingPcmBuffer::new(policy.ring_capacity_samples());
     let mut samples_since_decode = 0;
     let mut silence_samples = 0;
     let mut has_active_speech = false;
+    let mut first_speech_at = None;
+    let mut silence_started_at = None;
+    let mut partials = 0;
+    let mut finals = 0;
+    let mut errors = 0;
+
+    log::info!(
+        "ASR streaming started: step_ms={} length_ms={} keep_ms={} vad_rms_threshold={} vad_silence_ms={}",
+        policy.step_ms,
+        policy.length_ms,
+        policy.keep_ms,
+        vad.rms_threshold,
+        vad.silence_ms
+    );
 
     loop {
         if stop_rx.try_recv().is_ok() {
@@ -75,19 +86,60 @@ fn run_streaming_decoder(
 
                 if chunk_is_speech {
                     has_active_speech = true;
+                    first_speech_at.get_or_insert_with(Instant::now);
                     silence_samples = 0;
+                    silence_started_at = None;
                     samples_since_decode += chunk.len();
                     if samples_since_decode >= policy.step_samples() {
                         samples_since_decode = 0;
-                        decode_window(&mut *engine, &ring, policy, &event_tx, DecodeKind::Partial);
+                        match decode_window(
+                            &mut *engine,
+                            &ring,
+                            policy,
+                            &event_tx,
+                            DecodeKind::Partial,
+                        ) {
+                            DecodeOutcome::Transcript => {
+                                partials += 1;
+                                if partials == 1 {
+                                    log::info!(
+                                        "ASR first partial: session_ms={} speech_ms={}",
+                                        elapsed_ms(session_start),
+                                        first_speech_at.map(elapsed_ms).unwrap_or_default()
+                                    );
+                                }
+                            }
+                            DecodeOutcome::Error => errors += 1,
+                            DecodeOutcome::Skipped => {}
+                        }
                     }
                 } else if has_active_speech {
+                    silence_started_at.get_or_insert_with(Instant::now);
                     silence_samples += chunk.len();
                     if silence_samples >= vad.silence_samples(policy.sample_rate_hz) {
-                        decode_window(&mut *engine, &ring, policy, &event_tx, DecodeKind::Final);
+                        match decode_window(
+                            &mut *engine,
+                            &ring,
+                            policy,
+                            &event_tx,
+                            DecodeKind::Final,
+                        ) {
+                            DecodeOutcome::Transcript => {
+                                finals += 1;
+                                log::info!(
+                                    "ASR silence final: session_ms={} silence_ms={}",
+                                    elapsed_ms(session_start),
+                                    silence_started_at.map(elapsed_ms).unwrap_or_default()
+                                );
+                            }
+                            DecodeOutcome::Error => errors += 1,
+                            DecodeOutcome::Skipped => {}
+                        }
                         has_active_speech = false;
                         samples_since_decode = 0;
                         silence_samples = 0;
+                        first_speech_at = None;
+                        silence_started_at = None;
                     }
                 }
             }
@@ -96,13 +148,29 @@ fn run_streaming_decoder(
         }
     }
 
+    let process_end = ProcessSample::capture();
+    log::info!(
+        "ASR streaming stopped: session_ms={} partials={} finals={} errors={} process_cpu_delta_ms={:?} working_set_mb={:?}",
+        elapsed_ms(session_start),
+        partials,
+        finals,
+        errors,
+        process_cpu_delta_ms(process_start, process_end),
+        process_end.working_set_mb
+    );
     engine
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum DecodeKind {
     Partial,
     Final,
+}
+
+enum DecodeOutcome {
+    Transcript,
+    Error,
+    Skipped,
 }
 
 fn decode_window(
@@ -111,24 +179,48 @@ fn decode_window(
     policy: WindowPolicy,
     event_tx: &Sender<WorkerEvent>,
     kind: DecodeKind,
-) {
+) -> DecodeOutcome {
     if ring.is_empty() {
-        return;
+        return DecodeOutcome::Skipped;
     }
 
     let samples = ring.tail_window(policy.window_samples());
     let path = streaming_window_path();
+    let decode_start = Instant::now();
     let event = match write_debug_wav(&path, &samples, WORKER_SAMPLE_RATE_HZ)
         .and_then(|_| engine.transcribe_file(&path))
     {
-        Ok(transcription) => transcript_event(transcription, kind),
-        Err(error) => WorkerEvent::TranscriptError {
-            error: error.to_string(),
-            chunk_timestamp: unix_secs(),
-        },
+        Ok(transcription) => {
+            log::debug!(
+                "ASR {:?} decode: window_samples={} wall_ms={} engine_ms={}",
+                kind,
+                samples.len(),
+                elapsed_ms(decode_start),
+                transcription.processing_latency_ms
+            );
+            transcript_event(transcription, kind)
+        }
+        Err(error) => {
+            log::warn!(
+                "ASR {:?} decode failed after {}ms: {}",
+                kind,
+                elapsed_ms(decode_start),
+                error
+            );
+            WorkerEvent::TranscriptError {
+                error: error.to_string(),
+                chunk_timestamp: unix_secs(),
+            }
+        }
     };
     let _ = std::fs::remove_file(path);
+    let outcome = if matches!(event, WorkerEvent::TranscriptError { .. }) {
+        DecodeOutcome::Error
+    } else {
+        DecodeOutcome::Transcript
+    };
     let _ = event_tx.send(event);
+    outcome
 }
 
 fn transcript_event(transcription: Transcription, kind: DecodeKind) -> WorkerEvent {
@@ -167,6 +259,14 @@ fn unix_timestamp_nanos() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos()
+}
+
+fn elapsed_ms(start: Instant) -> u64 {
+    start.elapsed().as_millis().min(u64::MAX as u128) as u64
+}
+
+fn process_cpu_delta_ms(start: ProcessSample, end: ProcessSample) -> Option<u64> {
+    end.cpu_ms?.checked_sub(start.cpu_ms?)
 }
 
 #[cfg(test)]

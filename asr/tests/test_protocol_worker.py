@@ -19,6 +19,8 @@ from openwhisper_asr.worker.stdio import (
     run_worker,
 )
 
+FIXTURE_DIR = Path(__file__).parents[1] / "test_data" / "protocol"
+
 
 class FakeEngine(ASREngine):
     def __init__(self) -> None:
@@ -91,6 +93,66 @@ def test_worker_responds_to_health_check() -> None:
     assert exit_code == 0
     lines = [json.loads(line) for line in output_stream.getvalue().splitlines()]
     assert lines[0] == {"type": "health.ok", "timestamp": 7, "status": "ready"}
+
+
+def test_v1_event_fixture_matches_python_protocol_helpers() -> None:
+    lines = _load_fixture("v1_events.ndjson")
+
+    assert lines[0] == {"type": "health.ok", "timestamp": 7, "status": "ready"}
+    assert lines[1] == {"type": "model.loaded", "device": "cpu", "memory_mb": 0.0}
+    assert lines[2] == {"type": "model.error", "error": "model load failed", "recoverable": True}
+    assert lines[3] == {
+        "type": "transcript.partial",
+        "text": "hello",
+        "is_final": False,
+        "processing_latency_ms": 12,
+    }
+    assert lines[4]["type"] == "transcript.final"
+    assert lines[4]["words"][0] == {"text": "hello", "start_ms": 0, "end_ms": 320, "confidence": 0.92}
+    assert lines[5] == {"type": "transcript.error", "error": "decode failed", "chunk_timestamp": 7}
+    assert lines[6] == {
+        "type": "audio.error",
+        "error": "microphone unavailable",
+        "code": "AUDIO_RECORDING_FAILED",
+    }
+    assert lines[7] == {
+        "type": "error",
+        "code": "PROTOCOL_ERROR",
+        "message": "Invalid JSON",
+        "recoverable": True,
+    }
+
+
+def test_python_handler_accepts_v1_command_fixture() -> None:
+    output = StringIO()
+    writer = WorkerWriter(output)
+    engine = FakeEngine()
+    recorders: list[FakeRecorder] = []
+
+    def make_recorder(path: Path) -> FakeRecorder:
+        recorder = FakeRecorder(path)
+        recorders.append(recorder)
+        return recorder
+
+    handler = RecordingDictationHandler(
+        writer=writer,
+        config=_worker_config(),
+        engine_factory=lambda: engine,
+        recorder_factory=make_recorder,
+    )
+
+    for command in _load_fixture("v1_commands.ndjson"):
+        should_stop = handle_message(command, handler, writer)
+        if should_stop:
+            break
+
+    lines = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [line["type"] for line in lines] == [
+        "health.ok",
+        "model.loaded",
+        "transcript.final",
+    ]
+    assert lines[-1]["text"] == "real recorded speech"
 
 
 def test_dictation_stop_transcribes_the_recorded_wav_path() -> None:
@@ -202,3 +264,7 @@ def _worker_config() -> WorkerConfig:
         channels=1,
         recording_device=None,
     )
+
+
+def _load_fixture(name: str) -> list[dict[str, object]]:
+    return [json.loads(line) for line in (FIXTURE_DIR / name).read_text(encoding="utf-8").splitlines()]

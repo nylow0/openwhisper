@@ -5,9 +5,10 @@ mod protocol;
 mod vad;
 mod worker;
 
-fn main() {
-    if let Err(err) = worker::run_stdio() {
-        eprintln!("openwhisper-asr-rs worker error: {err}");
-        std::process::exit(1);
-    }
+fn main() -> anyhow::Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_target(false)
+        .init();
+
+    worker::run_stdio()
 }

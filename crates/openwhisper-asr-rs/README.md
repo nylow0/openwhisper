@@ -1,24 +1,23 @@
-# openwhisper-asr-rs
+# OpenWhisper ASR Rust Worker
 
-Bootstrap Rust ASR worker for OpenWhisper.
+This crate is the Rust-first ASR worker bootstrap for OpenWhisper.
 
-## Current status
+Current scope:
 
-- NDJSON stdio worker loop
-- Health check endpoint (`health.check` -> `health.ok`)
-- Mock transcription endpoint (`transcribe.mock` -> `transcription.final`)
-- Mock streaming endpoint (`stream.mock` -> `transcription.partial`) with baseline VAD + ring buffer primitives
-- File transcription contract endpoint (`transcribe.file` with `payload.audio_path`)
-- Device listing endpoint (`devices.list`) backed by CPAL host input enumeration
+- NDJSON stdio worker compatible with the existing Python worker protocol.
+- Mock dictation and file transcription paths for desktop plumbing.
+- CPAL device discovery and PCM conversion helpers.
+- WAV diagnostics writer via `hound`.
+- Ring buffer and baseline RMS VAD primitives for streaming work.
 
-## Run
+Run locally:
 
-```bash
-cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml
+```powershell
+cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs
 ```
 
-Then send lines of NDJSON, for example:
+Example health check:
 
-```json
-{"type":"health.check","timestamp":1}
+```powershell
+'{"type":"health.check","timestamp":7}' | cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs
 ```

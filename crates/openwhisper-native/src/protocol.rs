@@ -10,7 +10,7 @@ pub struct WordResult {
     pub confidence: Option<f32>,
 }
 
-// ─── Messages Rust → Python ───
+// Messages native helper -> ASR worker.
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "type")]
@@ -25,7 +25,7 @@ pub enum ToWorker {
     DictationStop,
 }
 
-// ─── Messages Python → Rust ───
+// Messages ASR worker -> native helper.
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type")]

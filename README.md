@@ -7,7 +7,7 @@ Windows-first offline dictation desktop app.
 - **Electron + Svelte + TypeScript**: UI layer
 - **Rust**: Native Windows helper (hotkeys, injection)
 - **Rust ASR worker**: production desktop recording and whisper.cpp worker in `crates/openwhisper-asr-rs/`
-- **Python ASR core**: reusable development fallback package in [`asr/`](asr/)
+- **ASR profiles and validation tools**: shared whisper.cpp config and test tooling in [`asr/`](asr/)
 - **Models**: product-owned runtime model assets in `models/`
 
 ## Quick Start
@@ -17,8 +17,6 @@ Windows-first offline dictation desktop app.
 - Windows 10/11
 - Bun (`curl -fsSL https://bun.sh/install | bash`)
 - Rust (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
-- Python 3.10 or 3.11
-- uv (`pip install uv`)
 
 ### Setup
 
@@ -29,8 +27,8 @@ cd openwhisper
 bun run setup
 ```
 
-The Python ASR core lives in [`asr/`](asr/). The q8 whisper.cpp model assets
-live under `models/` and are tracked with Git LFS.
+The q8 whisper.cpp model assets live under `models/` and are tracked with Git
+LFS.
 
 ### Development
 
@@ -41,8 +39,8 @@ bun dev
 # Run Rust helper
 cargo run --manifest-path crates/openwhisper-native/Cargo.toml
 
-# Run Python ASR worker
-cd asr && uv run python -m openwhisper_asr
+# Run Rust ASR worker
+cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml
 ```
 
 ### Windows Package
@@ -62,7 +60,7 @@ or `uv`.
 
 ```text
 apps/desktop/               # Electron app
-asr/                        # Python ASR runtime and whisper.cpp profiles
+asr/                        # whisper.cpp profiles and ASR validation tooling
 crates/openwhisper-native/  # Rust helper
 crates/openwhisper-asr-rs/  # Rust ASR worker
 models/                     # Git LFS model assets used by the product

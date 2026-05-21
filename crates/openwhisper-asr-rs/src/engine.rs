@@ -37,11 +37,13 @@ pub struct ModelLoadInfo {
     pub memory_mb: f64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Default)]
 pub struct MockEngine {
     loaded: bool,
 }
 
+#[cfg(test)]
 impl AsrEngine for MockEngine {
     fn load_model(&mut self, _model: &str, device: &str) -> Result<ModelLoadInfo> {
         self.loaded = true;
@@ -75,6 +77,7 @@ impl AsrEngine for MockEngine {
     }
 }
 
+#[cfg(test)]
 pub fn mock_words(text: &str) -> Vec<WordResult> {
     let mut start_ms = 0;
     text.split_whitespace()

@@ -11,40 +11,7 @@ use tokio::time::interval;
 use crate::protocol::{FromWorker, ToWorker};
 
 const HEALTH_CHECK_INTERVAL_SECS: u64 = 5;
-const WORKER_ENV: &str = "OPENWHISPER_ASR_WORKER";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkerKind {
-    Python,
-    Rust,
-}
-
-impl WorkerKind {
-    fn from_value(value: Option<&str>) -> Result<Self> {
-        match value {
-            None | Some("") | Some("python") => Ok(Self::Python),
-            Some("rust") => Ok(Self::Rust),
-            Some(value) => anyhow::bail!("{WORKER_ENV} must be 'python' or 'rust', got '{value}'"),
-        }
-    }
-
-    fn selected() -> Result<Self> {
-        Self::from_value(std::env::var(WORKER_ENV).ok().as_deref())
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Python => "Python",
-            Self::Rust => "Rust",
-        }
-    }
-}
-
-struct WorkerCommand {
-    program: PathBuf,
-    args: Vec<&'static str>,
-    current_dir: Option<PathBuf>,
-}
+const WORKER_LABEL: &str = "Rust";
 
 fn find_ancestor_child(child: &str, marker: &str) -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
@@ -57,11 +24,6 @@ fn find_ancestor_child(child: &str, marker: &str) -> Option<PathBuf> {
             return None;
         }
     }
-}
-
-fn find_service_dir() -> Result<PathBuf> {
-    find_ancestor_child("asr", "pyproject.toml")
-        .context("Could not find OpenWhisper ASR directory from current directory")
 }
 
 fn find_rust_worker_dir() -> Result<PathBuf> {
@@ -106,69 +68,26 @@ fn find_rust_worker_binary() -> Result<PathBuf> {
     Ok(PathBuf::from("ow-asr-rs"))
 }
 
-fn python_command() -> Result<WorkerCommand> {
-    let service_dir = find_service_dir()?;
-    let venv_python = service_dir.join(".venv").join("Scripts").join("python.exe");
-    if venv_python.exists() {
-        return Ok(WorkerCommand {
-            program: venv_python,
-            args: vec!["-m", "openwhisper_asr"],
-            current_dir: Some(service_dir),
-        });
-    }
-
-    Ok(WorkerCommand {
-        program: PathBuf::from("uv"),
-        args: vec!["run", "python", "-m", "openwhisper_asr"],
-        current_dir: Some(service_dir),
-    })
-}
-
-fn rust_command() -> Result<WorkerCommand> {
-    Ok(WorkerCommand {
-        program: find_rust_worker_binary()?,
-        args: vec![],
-        current_dir: None,
-    })
-}
-
-fn worker_command(kind: WorkerKind) -> Result<WorkerCommand> {
-    match kind {
-        WorkerKind::Python => python_command(),
-        WorkerKind::Rust => rust_command(),
-    }
-}
-
 pub struct AsrWorker {
     _child: Child,
-    kind: WorkerKind,
     tx: mpsc::Sender<ToWorker>,
     rx: mpsc::Receiver<FromWorker>,
 }
 
 impl AsrWorker {
     pub async fn spawn() -> Result<Self> {
-        let kind = WorkerKind::selected()?;
-        let worker_command = worker_command(kind)?;
-        log::info!(
-            "Starting {} ASR worker via {:?}",
-            kind.label(),
-            worker_command.program
-        );
+        let worker_program = find_rust_worker_binary()?;
+        log::info!("Starting {WORKER_LABEL} ASR worker via {worker_program:?}");
 
-        let mut command = Command::new(&worker_command.program);
+        let mut command = Command::new(&worker_program);
         command
-            .args(&worker_command.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        if let Some(current_dir) = worker_command.current_dir {
-            command.current_dir(current_dir);
-        }
 
         let mut child = command
             .spawn()
-            .with_context(|| format!("Failed to spawn {} ASR worker", kind.label()))?;
+            .with_context(|| format!("Failed to spawn {WORKER_LABEL} ASR worker"))?;
         let stdin = child.stdin.take().expect("Failed to open stdin");
         let stdout = child.stdout.take().expect("Failed to open stdout");
 
@@ -176,7 +95,7 @@ impl AsrWorker {
         let (from_worker_tx, from_worker_rx) = mpsc::channel::<FromWorker>(100);
 
         let writer_tx = to_worker_tx.clone();
-        let worker_label = kind.label();
+        let worker_label = WORKER_LABEL;
         tokio::spawn(async move {
             let mut stdin = stdin;
             while let Some(msg) = to_worker_rx.recv().await {
@@ -279,14 +198,13 @@ impl AsrWorker {
 
         Ok(Self {
             _child: child,
-            kind,
             tx: to_worker_tx,
             rx: from_worker_rx,
         })
     }
 
-    pub fn kind(&self) -> WorkerKind {
-        self.kind
+    pub fn label(&self) -> &'static str {
+        WORKER_LABEL
     }
 
     pub async fn send(&self, msg: ToWorker) -> Result<()> {
@@ -296,34 +214,5 @@ impl AsrWorker {
 
     pub async fn recv(&mut self) -> Option<FromWorker> {
         self.rx.recv().await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::WorkerKind;
-
-    #[test]
-    fn default_worker_selection_keeps_python_fallback() {
-        assert_eq!(WorkerKind::from_value(None).unwrap(), WorkerKind::Python);
-        assert_eq!(
-            WorkerKind::from_value(Some("")).unwrap(),
-            WorkerKind::Python
-        );
-    }
-
-    #[test]
-    fn worker_selection_explicitly_opts_into_rust() {
-        assert_eq!(
-            WorkerKind::from_value(Some("rust")).unwrap(),
-            WorkerKind::Rust
-        );
-    }
-
-    #[test]
-    fn worker_selection_rejects_unknown_values_before_spawn() {
-        let error = WorkerKind::from_value(Some("whisper")).unwrap_err();
-
-        assert!(error.to_string().contains("OPENWHISPER_ASR_WORKER"));
     }
 }

@@ -1,8 +1,8 @@
 # OpenWhisper ASR Worker Protocol
 
 The ASR worker protocol is newline-delimited JSON over stdio. Every command and
-event is one JSON object followed by `\n`. The desktop/native bridge must treat
-the Python and Rust workers as interchangeable only for the v1 contract below.
+event is one JSON object followed by `\n`. The Rust worker and desktop/native
+bridge use the v1 contract below.
 
 ## V1 Commands
 
@@ -148,8 +148,8 @@ Required behavior:
 
 ## Rust Extensions
 
-These are useful for the Rust migration, but they are not part of the shared
-Python/Rust v1 contract yet:
+These are useful diagnostics, but they are not part of the desktop v1 contract
+yet:
 
 - `devices.list` -> `devices.result`
 - `transcribe.file`

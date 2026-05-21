@@ -116,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_python_compatible_transcript_final_shape() {
+    fn emits_desktop_compatible_transcript_final_shape() {
         let event = WorkerEvent::TranscriptFinal {
             text: "hello".to_string(),
             words: vec![],
@@ -131,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_python_compatible_audio_error_shape() {
+    fn emits_desktop_compatible_audio_error_shape() {
         let event = WorkerEvent::AudioError {
             error: "microphone unavailable".to_string(),
             code: "AUDIO_RECORDING_FAILED".to_string(),

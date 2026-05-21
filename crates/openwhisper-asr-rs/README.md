@@ -1,11 +1,11 @@
 # OpenWhisper ASR Rust Worker
 
-This crate is the Rust-first ASR worker bootstrap for OpenWhisper.
+This crate is the production ASR worker for OpenWhisper.
 
 Current scope:
 
-- NDJSON stdio worker compatible with the existing Python worker protocol.
-- Mock dictation and file transcription paths for desktop plumbing.
+- NDJSON stdio worker compatible with the desktop bridge protocol.
+- Live microphone dictation and file transcription through whisper.cpp.
 - CPAL device discovery and PCM conversion helpers.
 - WAV diagnostics writer via `hound`.
 - Ring buffer and baseline RMS VAD primitives for streaming work.
@@ -39,11 +39,7 @@ cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs -
 
 The transcribe command resolves `asr/config/whispercpp-profiles.json`, validates
 the configured model file, runs the selected `whisper-cli`, and prints the final
-text. Worker file transcription can use the same backend by setting:
-
-```powershell
-$env:OPENWHISPER_ASR_ENGINE = "whispercpp"
-```
+text. The stdio worker uses the same backend.
 
 Measure the Rust-controlled backend against a WAV file:
 

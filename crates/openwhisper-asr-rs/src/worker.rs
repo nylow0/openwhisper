@@ -12,7 +12,7 @@ use crate::audio_capture::{
     list_input_devices, start_default_streaming_recording_session, AudioChunkReceiver,
     RecordingSession,
 };
-use crate::engine::{AsrEngine, MockEngine, WhisperCppEngine};
+use crate::engine::{AsrEngine, WhisperCppEngine};
 use crate::protocol::{protocol_error, WorkerCommand, WorkerEvent};
 use crate::streaming::StreamingSession;
 
@@ -32,7 +32,7 @@ pub fn run_stdio() -> anyhow::Result<()> {
         line_rx,
         stdout.lock(),
         default_recorder_factory,
-        worker_engine_from_env(),
+        worker_engine(),
     )
 }
 
@@ -352,7 +352,7 @@ where
             match streaming.stop() {
                 Ok(engine) => self.engine = Some(engine),
                 Err(error) => {
-                    self.engine = Some(worker_engine_from_env());
+                    self.engine = Some(worker_engine());
                     events.push(WorkerEvent::TranscriptError {
                         error: error.to_string(),
                         chunk_timestamp: unix_secs(),
@@ -391,15 +391,8 @@ fn default_recorder_factory() -> Result<Box<dyn ActiveRecording>> {
     Ok(Box::new(session))
 }
 
-fn worker_engine_from_env() -> Box<dyn AsrEngine> {
-    match std::env::var("OPENWHISPER_ASR_ENGINE")
-        .unwrap_or_else(|_| "mock".to_string())
-        .to_lowercase()
-        .as_str()
-    {
-        "whispercpp" => Box::new(WhisperCppEngine::default()),
-        _ => Box::new(MockEngine::default()),
-    }
+fn worker_engine() -> Box<dyn AsrEngine> {
+    Box::new(WhisperCppEngine::default())
 }
 
 fn default_recording_path() -> PathBuf {
@@ -519,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn health_check_matches_python_worker_contract() {
+    fn health_check_matches_desktop_worker_contract() {
         let lines = run(r#"{"type":"health.check","timestamp":7}"#);
 
         assert_eq!(lines[0]["type"], "health.ok");

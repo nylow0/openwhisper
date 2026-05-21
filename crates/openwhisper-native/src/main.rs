@@ -59,9 +59,9 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Spawn the protocol-compatible ASR worker selected by the environment.
+    // Spawn the protocol-compatible Rust ASR worker.
     let mut asr_worker = AsrWorker::spawn().await?;
-    let asr_worker_label = asr_worker.kind().label();
+    let asr_worker_label = asr_worker.label();
     log::info!("{} ASR worker spawned", asr_worker_label);
 
     // Shared state

@@ -257,8 +257,6 @@ function rustEnv(): NodeJS.ProcessEnv {
 
   return {
     ...env,
-    OPENWHISPER_ASR_WORKER: 'rust',
-    OPENWHISPER_ASR_ENGINE: 'whispercpp',
     OPENWHISPER_WHISPERCPP_CONFIG: packagedAssetPath('asr', 'config', 'whispercpp-profiles.json'),
     OPENWHISPER_MODEL_DIR: packagedAssetPath('models'),
     OPENWHISPER_WHISPERCPP_CPU_EXE: packagedAssetPath(

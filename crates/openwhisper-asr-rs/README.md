@@ -21,3 +21,12 @@ Example health check:
 ```powershell
 '{"type":"health.check","timestamp":7}' | cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs
 ```
+
+Record a microphone WAV through the Rust capture path:
+
+```powershell
+cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs -- record .\recording.wav --seconds 30
+```
+
+The record command uses the default input device, mixes input to mono, resamples
+to 16 kHz, and writes a 16-bit PCM WAV.

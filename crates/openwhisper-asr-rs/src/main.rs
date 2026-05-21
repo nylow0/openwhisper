@@ -2,6 +2,7 @@ mod audio_capture;
 mod buffering;
 mod engine;
 mod protocol;
+mod streaming;
 mod vad;
 mod worker;
 

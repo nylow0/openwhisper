@@ -53,7 +53,6 @@ pub enum WorkerEvent {
     ModelError { error: String, recoverable: bool },
 
     #[serde(rename = "transcript.partial")]
-    #[allow(dead_code)]
     TranscriptPartial {
         text: String,
         is_final: bool,

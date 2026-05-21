@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::VecDeque;
 
 #[derive(Debug)]
@@ -38,12 +36,11 @@ impl RingPcmBuffer {
             .collect()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.samples.len()
     }
 
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }
@@ -74,6 +71,14 @@ impl WindowPolicy {
     pub fn window_samples(&self) -> usize {
         self.samples_for_ms(self.length_ms)
     }
+
+    pub fn ring_capacity_samples(&self) -> usize {
+        self.window_samples() + self.samples_for_ms(self.keep_ms)
+    }
+
+    pub fn step_samples(&self) -> usize {
+        self.samples_for_ms(self.step_ms)
+    }
 }
 
 #[cfg(test)]
@@ -98,5 +103,7 @@ mod tests {
 
         assert_eq!(policy.samples_for_ms(500), 8_000);
         assert_eq!(policy.window_samples(), 80_000);
+        assert_eq!(policy.ring_capacity_samples(), 88_000);
+        assert_eq!(policy.step_samples(), 8_000);
     }
 }

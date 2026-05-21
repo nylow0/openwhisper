@@ -16,7 +16,7 @@ pub struct Transcription {
     pub processing_latency_ms: u32,
 }
 
-pub trait AsrEngine {
+pub trait AsrEngine: Send {
     fn load_model(&mut self, model: &str, device: &str) -> Result<ModelLoadInfo>;
     fn transcribe_file(&mut self, audio_path: &Path) -> Result<Transcription>;
 }

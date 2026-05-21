@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -7,6 +8,10 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::Serialize;
 
 pub const WORKER_SAMPLE_RATE_HZ: u32 = 16_000;
+const STREAM_CHUNK_QUEUE_CAPACITY: usize = 8;
+
+pub type AudioChunkReceiver = Receiver<Vec<f32>>;
+type WorkerWavWriter = hound::WavWriter<std::io::BufWriter<std::fs::File>>;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CaptureDeviceInfo {
@@ -51,29 +56,45 @@ pub fn record_default_input_to_wav(path: &Path, seconds: u64) -> Result<()> {
 pub struct RecordingSession {
     path: PathBuf,
     stream: cpal::Stream,
-    samples: Arc<Mutex<Vec<f32>>>,
-    source_rate_hz: u32,
+    writer: Arc<Mutex<Option<WorkerWavWriter>>>,
+    stream_samples: Option<AudioChunkReceiver>,
 }
 
 impl RecordingSession {
     pub fn stop(self) -> Result<PathBuf> {
         drop(self.stream);
-
-        let samples = self
-            .samples
+        let writer = self
+            .writer
             .lock()
-            .map_err(|_| anyhow::anyhow!("captured audio buffer lock was poisoned"))?;
-        let worker_samples = resample_linear(&samples, self.source_rate_hz, WORKER_SAMPLE_RATE_HZ);
-        write_debug_wav(&self.path, &worker_samples, WORKER_SAMPLE_RATE_HZ)?;
+            .map_err(|_| anyhow::anyhow!("captured audio writer lock was poisoned"))?
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("captured audio writer was already closed"))?;
+        writer.finalize()?;
         Ok(self.path)
     }
 
     pub fn cancel(self) {
         drop(self.stream);
+        if let Ok(mut writer) = self.writer.lock() {
+            let _ = writer.take();
+        }
+        let _ = std::fs::remove_file(self.path);
+    }
+
+    pub fn take_stream_samples(&mut self) -> Option<AudioChunkReceiver> {
+        self.stream_samples.take()
     }
 }
 
 pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession> {
+    start_recording_session(path, false)
+}
+
+pub fn start_default_streaming_recording_session(path: PathBuf) -> Result<RecordingSession> {
+    start_recording_session(path, true)
+}
+
+fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<RecordingSession> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -83,27 +104,58 @@ pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession
         .context("failed to read default input device config")?;
     let sample_rate_hz = config.sample_rate().0;
     let channels = config.channels();
-    let samples = Arc::new(Mutex::new(Vec::new()));
-    let captured_samples = Arc::clone(&samples);
+    let writer = Arc::new(Mutex::new(Some(create_worker_wav_writer(&path)?)));
+    let captured_writer = Arc::clone(&writer);
+    let (stream_tx, stream_samples) = if stream_chunks {
+        let (tx, rx) = sync_channel(STREAM_CHUNK_QUEUE_CAPACITY);
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
     let error_callback = |error| log::error!("input stream error: {error}");
 
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &config.clone().into(),
-            move |data: &[f32], _| push_mono_samples(&captured_samples, data, channels, f32_to_f32),
+            move |data: &[f32], _| {
+                push_mono_samples(
+                    &captured_writer,
+                    stream_tx.as_ref(),
+                    data,
+                    channels,
+                    sample_rate_hz,
+                    f32_to_f32,
+                )
+            },
             error_callback,
             None,
         ),
         cpal::SampleFormat::F64 => device.build_input_stream(
             &config.clone().into(),
-            move |data: &[f64], _| push_mono_samples(&captured_samples, data, channels, f64_to_f32),
+            move |data: &[f64], _| {
+                push_mono_samples(
+                    &captured_writer,
+                    stream_tx.as_ref(),
+                    data,
+                    channels,
+                    sample_rate_hz,
+                    f64_to_f32,
+                )
+            },
             error_callback,
             None,
         ),
         cpal::SampleFormat::I8 => device.build_input_stream(
             &config.clone().into(),
             move |data: &[i8], _| {
-                push_mono_samples(&captured_samples, data, channels, i8_sample_to_f32)
+                push_mono_samples(
+                    &captured_writer,
+                    stream_tx.as_ref(),
+                    data,
+                    channels,
+                    sample_rate_hz,
+                    i8_sample_to_f32,
+                )
             },
             error_callback,
             None,
@@ -111,7 +163,14 @@ pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession
         cpal::SampleFormat::I16 => device.build_input_stream(
             &config.clone().into(),
             move |data: &[i16], _| {
-                push_mono_samples(&captured_samples, data, channels, i16_sample_to_f32)
+                push_mono_samples(
+                    &captured_writer,
+                    stream_tx.as_ref(),
+                    data,
+                    channels,
+                    sample_rate_hz,
+                    i16_sample_to_f32,
+                )
             },
             error_callback,
             None,
@@ -119,7 +178,14 @@ pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession
         cpal::SampleFormat::I32 => device.build_input_stream(
             &config.clone().into(),
             move |data: &[i32], _| {
-                push_mono_samples(&captured_samples, data, channels, i32_sample_to_f32)
+                push_mono_samples(
+                    &captured_writer,
+                    stream_tx.as_ref(),
+                    data,
+                    channels,
+                    sample_rate_hz,
+                    i32_sample_to_f32,
+                )
             },
             error_callback,
             None,
@@ -127,7 +193,14 @@ pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession
         cpal::SampleFormat::I64 => device.build_input_stream(
             &config.clone().into(),
             move |data: &[i64], _| {
-                push_mono_samples(&captured_samples, data, channels, i64_sample_to_f32)
+                push_mono_samples(
+                    &captured_writer,
+                    stream_tx.as_ref(),
+                    data,
+                    channels,
+                    sample_rate_hz,
+                    i64_sample_to_f32,
+                )
             },
             error_callback,
             None,
@@ -135,7 +208,14 @@ pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession
         cpal::SampleFormat::U8 => device.build_input_stream(
             &config.clone().into(),
             move |data: &[u8], _| {
-                push_mono_samples(&captured_samples, data, channels, u8_sample_to_f32)
+                push_mono_samples(
+                    &captured_writer,
+                    stream_tx.as_ref(),
+                    data,
+                    channels,
+                    sample_rate_hz,
+                    u8_sample_to_f32,
+                )
             },
             error_callback,
             None,
@@ -143,7 +223,14 @@ pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession
         cpal::SampleFormat::U16 => device.build_input_stream(
             &config.clone().into(),
             move |data: &[u16], _| {
-                push_mono_samples(&captured_samples, data, channels, u16_sample_to_f32)
+                push_mono_samples(
+                    &captured_writer,
+                    stream_tx.as_ref(),
+                    data,
+                    channels,
+                    sample_rate_hz,
+                    u16_sample_to_f32,
+                )
             },
             error_callback,
             None,
@@ -151,7 +238,14 @@ pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession
         cpal::SampleFormat::U32 => device.build_input_stream(
             &config.clone().into(),
             move |data: &[u32], _| {
-                push_mono_samples(&captured_samples, data, channels, u32_sample_to_f32)
+                push_mono_samples(
+                    &captured_writer,
+                    stream_tx.as_ref(),
+                    data,
+                    channels,
+                    sample_rate_hz,
+                    u32_sample_to_f32,
+                )
             },
             error_callback,
             None,
@@ -159,7 +253,14 @@ pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession
         cpal::SampleFormat::U64 => device.build_input_stream(
             &config.clone().into(),
             move |data: &[u64], _| {
-                push_mono_samples(&captured_samples, data, channels, u64_sample_to_f32)
+                push_mono_samples(
+                    &captured_writer,
+                    stream_tx.as_ref(),
+                    data,
+                    channels,
+                    sample_rate_hz,
+                    u64_sample_to_f32,
+                )
             },
             error_callback,
             None,
@@ -173,8 +274,8 @@ pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession
     Ok(RecordingSession {
         path,
         stream,
-        samples,
-        source_rate_hz: sample_rate_hz,
+        writer,
+        stream_samples,
     })
 }
 
@@ -221,6 +322,17 @@ pub fn resample_linear(samples: &[f32], source_rate_hz: u32, target_rate_hz: u32
 }
 
 pub fn write_debug_wav(path: &Path, samples: &[f32], sample_rate_hz: u32) -> Result<()> {
+    let mut writer = create_wav_writer(path, sample_rate_hz)?;
+    write_wav_samples(&mut writer, samples)?;
+    writer.finalize()?;
+    Ok(())
+}
+
+fn create_worker_wav_writer(path: &Path) -> Result<WorkerWavWriter> {
+    create_wav_writer(path, WORKER_SAMPLE_RATE_HZ)
+}
+
+fn create_wav_writer(path: &Path, sample_rate_hz: u32) -> Result<WorkerWavWriter> {
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: sample_rate_hz,
@@ -228,32 +340,53 @@ pub fn write_debug_wav(path: &Path, samples: &[f32], sample_rate_hz: u32) -> Res
         sample_format: hound::SampleFormat::Int,
     };
 
-    let mut writer = hound::WavWriter::create(path, spec)
-        .with_context(|| format!("failed to create debug wav at {}", path.display()))?;
+    hound::WavWriter::create(path, spec)
+        .with_context(|| format!("failed to create debug wav at {}", path.display()))
+}
+
+fn write_wav_samples(writer: &mut WorkerWavWriter, samples: &[f32]) -> Result<()> {
     for sample in samples {
         let clamped = sample.clamp(-1.0, 1.0);
         writer.write_sample((clamped * i16::MAX as f32) as i16)?;
     }
-    writer.finalize()?;
     Ok(())
 }
 
 fn push_mono_samples<T>(
-    samples: &Arc<Mutex<Vec<f32>>>,
+    writer: &Arc<Mutex<Option<WorkerWavWriter>>>,
+    stream_tx: Option<&SyncSender<Vec<f32>>>,
     data: &[T],
     channels: u16,
+    source_rate_hz: u32,
     convert: fn(T) -> f32,
 ) where
     T: Copy,
 {
     let channel_count = channels.max(1) as usize;
-    let Ok(mut output) = samples.lock() else {
+    let mono = data
+        .chunks(channel_count)
+        .map(|frame| frame.iter().map(|sample| convert(*sample)).sum::<f32>() / frame.len() as f32)
+        .collect::<Vec<_>>();
+
+    let worker_chunk = resample_linear(&mono, source_rate_hz, WORKER_SAMPLE_RATE_HZ);
+    let Ok(mut writer) = writer.lock() else {
         return;
     };
+    if let Some(writer) = writer.as_mut() {
+        if let Err(error) = write_wav_samples(writer, &worker_chunk) {
+            log::error!("failed to append captured audio to WAV: {error}");
+        }
+    }
+    drop(writer);
 
-    output.extend(data.chunks(channel_count).map(|frame| {
-        frame.iter().map(|sample| convert(*sample)).sum::<f32>() / frame.len() as f32
-    }));
+    if let Some(stream_tx) = stream_tx {
+        match stream_tx.try_send(worker_chunk) {
+            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+            Err(TrySendError::Full(_)) => {
+                log::debug!("dropping ASR streaming audio chunk because decoder is behind");
+            }
+        }
+    }
 }
 
 fn f32_to_f32(sample: f32) -> f32 {

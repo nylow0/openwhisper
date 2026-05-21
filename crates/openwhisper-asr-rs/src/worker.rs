@@ -151,6 +151,7 @@ where
     is_model_loaded: bool,
     recording: Option<Box<dyn ActiveRecording>>,
     recorder_factory: F,
+    stream_tail_finalized: bool,
     streaming: Option<StreamingSession>,
 }
 
@@ -164,6 +165,7 @@ where
             is_model_loaded: false,
             recording: None,
             recorder_factory,
+            stream_tail_finalized: false,
             streaming: None,
         }
     }
@@ -250,6 +252,7 @@ where
                         .take()
                         .expect("ASR engine must be idle when dictation starts");
                     self.streaming = Some(StreamingSession::spawn(engine, samples));
+                    self.stream_tail_finalized = false;
                 }
                 self.recording = Some(recording);
             }
@@ -282,7 +285,10 @@ where
         };
 
         let mut events = self.stop_streaming();
-        events.push(self.transcribe_file(&recording_path));
+        if !self.stream_tail_finalized {
+            events.push(self.transcribe_file(&recording_path));
+        }
+        self.stream_tail_finalized = false;
         let _ = std::fs::remove_file(recording_path);
         events
     }
@@ -320,6 +326,11 @@ where
         let mut events = Vec::new();
         if let Some(streaming) = &self.streaming {
             while let Some(event) = streaming.try_recv_event() {
+                match &event {
+                    WorkerEvent::TranscriptFinal { .. } => self.stream_tail_finalized = true,
+                    WorkerEvent::TranscriptPartial { .. } => self.stream_tail_finalized = false,
+                    _ => {}
+                }
                 events.push(event);
             }
         }
@@ -527,6 +538,62 @@ mod tests {
         ));
         let (sample_tx, sample_rx) = sync_channel(1);
         sample_tx.send(vec![0.2; 8_000]).unwrap();
+        let (line_tx, line_rx) = channel();
+        let feeder = thread::spawn(move || {
+            line_tx
+                .send(Ok("{\"type\":\"dictation.start\"}".to_string()))
+                .unwrap();
+            thread::sleep(Duration::from_millis(250));
+            line_tx
+                .send(Ok("{\"type\":\"dictation.stop\"}".to_string()))
+                .unwrap();
+            line_tx
+                .send(Ok("{\"type\":\"shutdown\"}".to_string()))
+                .unwrap();
+        });
+        let mut output = Vec::new();
+        let mut samples = Some(sample_rx);
+
+        run_live_worker(
+            line_rx,
+            &mut output,
+            || {
+                Ok(Box::new(StreamingFakeRecording {
+                    path: path.clone(),
+                    samples: samples.take(),
+                }))
+            },
+            Box::new(crate::engine::MockEngine::default()),
+        )
+        .unwrap();
+        feeder.join().unwrap();
+        let event_types = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<Value>(line).unwrap()["type"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            event_types,
+            vec!["model.loaded", "transcript.partial", "transcript.final"]
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn stop_skips_duplicate_final_after_silence_already_finalized_stream_tail() {
+        let path = std::env::temp_dir().join(format!(
+            "openwhisper-asr-rs-silence-final-test-{}.wav",
+            unix_timestamp_nanos()
+        ));
+        let (sample_tx, sample_rx) = sync_channel(2);
+        sample_tx.send(vec![0.2; 8_000]).unwrap();
+        sample_tx.send(vec![0.0; 16_000]).unwrap();
         let (line_tx, line_rx) = channel();
         let feeder = thread::spawn(move || {
             line_tx

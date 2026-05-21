@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::protocol::WordResult;
+use crate::vad::VadConfig;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Transcription {
@@ -19,6 +20,10 @@ pub struct Transcription {
 pub trait AsrEngine: Send {
     fn load_model(&mut self, model: &str, device: &str) -> Result<ModelLoadInfo>;
     fn transcribe_file(&mut self, audio_path: &Path) -> Result<Transcription>;
+
+    fn vad_config(&self) -> VadConfig {
+        VadConfig::default().with_env_overrides()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,6 +100,7 @@ struct WhisperCppSelection {
     model_path: PathBuf,
     args: Vec<String>,
     memory_mb: f64,
+    vad: VadConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,11 +130,31 @@ struct ProfileConfig {
     args: Vec<String>,
     #[serde(default)]
     benchmark: BenchmarkConfig,
+    #[serde(default)]
+    vad: ProfileVadConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct BenchmarkConfig {
     peak_ram_mb: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ProfileVadConfig {
+    rms_threshold: Option<f32>,
+    silence_ms: Option<u32>,
+}
+
+impl ProfileVadConfig {
+    fn into_vad_config(self) -> VadConfig {
+        let default = VadConfig::default();
+        VadConfig {
+            rms_threshold: self.rms_threshold.unwrap_or(default.rms_threshold),
+            silence_ms: self.silence_ms.unwrap_or(default.silence_ms),
+            ..default
+        }
+        .with_env_overrides()
+    }
 }
 
 impl Default for WhisperCppEngine {
@@ -277,6 +303,7 @@ impl AsrEngine for WhisperCppEngine {
             model_path,
             args: profile.args.clone(),
             memory_mb,
+            vad: profile.vad.into_vad_config(),
         });
 
         Ok(ModelLoadInfo {
@@ -337,6 +364,14 @@ impl AsrEngine for WhisperCppEngine {
         let _ = std::fs::remove_file(&json_path);
 
         parse_whisper_cpp_payload(&payload, elapsed_ms)
+    }
+
+    fn vad_config(&self) -> VadConfig {
+        self.selection
+            .as_ref()
+            .map(|selection| selection.vad)
+            .unwrap_or_default()
+            .with_env_overrides()
     }
 }
 
@@ -462,7 +497,9 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{parse_whisper_cpp_payload, AsrEngine, MockEngine, WhisperCppEngine};
+    use super::{
+        parse_whisper_cpp_payload, AsrEngine, MockEngine, ProfileConfig, WhisperCppEngine,
+    };
 
     #[test]
     fn mock_file_transcription_includes_source_name() {
@@ -491,6 +528,25 @@ mod tests {
         assert_eq!(result.text, "hello world");
         assert_eq!(result.language.as_deref(), Some("en"));
         assert_eq!(result.processing_latency_ms, 123);
+    }
+
+    #[test]
+    fn whisper_cpp_profile_vad_values_drive_streaming_defaults() {
+        let profile: ProfileConfig = serde_json::from_value(json!({
+            "device": "cpu",
+            "binary_hint": "cpu_avx_vnni",
+            "model": "medium_en_q8",
+            "args": ["-l", "en"],
+            "vad": {
+                "rms_threshold": 0.04,
+                "silence_ms": 650
+            }
+        }))
+        .unwrap();
+        let vad = profile.vad.into_vad_config();
+
+        assert_eq!(vad.rms_threshold, 0.04);
+        assert_eq!(vad.silence_ms, 650);
     }
 
     #[test]

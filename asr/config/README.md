@@ -19,3 +19,7 @@ the local path described in `whispercpp-profiles.json` for development.
 Benchmarks were run on 25 LibriSpeech `test-other` clips totaling `136.52s` of
 audio. `first_result_seconds` is the time until the first per-sample transcript
 JSON appeared.
+
+Rust streaming dictation reads each profile's `vad.rms_threshold` and
+`vad.silence_ms` defaults. `OPENWHISPER_ASR_VAD_RMS_THRESHOLD` and
+`OPENWHISPER_ASR_VAD_SILENCE_MS` override them for local tuning.

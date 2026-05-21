@@ -1,9 +1,8 @@
-#![allow(dead_code)]
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VadConfig {
     pub rms_threshold: f32,
     pub min_samples: usize,
+    pub silence_ms: u32,
 }
 
 impl Default for VadConfig {
@@ -11,7 +10,30 @@ impl Default for VadConfig {
         Self {
             rms_threshold: 0.015,
             min_samples: 160,
+            silence_ms: 900,
         }
+    }
+}
+
+impl VadConfig {
+    pub fn with_env_overrides(mut self) -> Self {
+        if let Ok(value) = std::env::var("OPENWHISPER_ASR_VAD_RMS_THRESHOLD") {
+            match value.parse::<f32>() {
+                Ok(threshold) if threshold >= 0.0 => self.rms_threshold = threshold,
+                _ => log::warn!("Ignoring invalid OPENWHISPER_ASR_VAD_RMS_THRESHOLD={value}"),
+            }
+        }
+        if let Ok(value) = std::env::var("OPENWHISPER_ASR_VAD_SILENCE_MS") {
+            match value.parse::<u32>() {
+                Ok(silence_ms) if silence_ms > 0 => self.silence_ms = silence_ms,
+                _ => log::warn!("Ignoring invalid OPENWHISPER_ASR_VAD_SILENCE_MS={value}"),
+            }
+        }
+        self
+    }
+
+    pub fn silence_samples(self, sample_rate_hz: u32) -> usize {
+        sample_rate_hz as usize * self.silence_ms as usize / 1_000
     }
 }
 
@@ -46,6 +68,7 @@ mod tests {
             VadConfig {
                 rms_threshold: 0.01,
                 min_samples: 160,
+                silence_ms: 900,
             }
         ));
         assert!(!is_speech(
@@ -53,7 +76,13 @@ mod tests {
             VadConfig {
                 rms_threshold: 0.01,
                 min_samples: 160,
+                silence_ms: 900,
             }
         ));
+    }
+
+    #[test]
+    fn silence_timeout_uses_worker_sample_rate_to_finalize_after_quiet_audio() {
+        assert_eq!(VadConfig::default().silence_samples(16_000), 14_400);
     }
 }

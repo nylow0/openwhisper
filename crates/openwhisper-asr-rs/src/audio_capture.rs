@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -42,6 +42,38 @@ pub fn list_input_devices() -> Vec<CaptureDeviceInfo> {
 }
 
 pub fn record_default_input_to_wav(path: &Path, seconds: u64) -> Result<()> {
+    let session = start_default_recording_session(path.to_path_buf())?;
+    std::thread::sleep(Duration::from_secs(seconds));
+    session.stop()?;
+    Ok(())
+}
+
+pub struct RecordingSession {
+    path: PathBuf,
+    stream: cpal::Stream,
+    samples: Arc<Mutex<Vec<f32>>>,
+    source_rate_hz: u32,
+}
+
+impl RecordingSession {
+    pub fn stop(self) -> Result<PathBuf> {
+        drop(self.stream);
+
+        let samples = self
+            .samples
+            .lock()
+            .map_err(|_| anyhow::anyhow!("captured audio buffer lock was poisoned"))?;
+        let worker_samples = resample_linear(&samples, self.source_rate_hz, WORKER_SAMPLE_RATE_HZ);
+        write_debug_wav(&self.path, &worker_samples, WORKER_SAMPLE_RATE_HZ)?;
+        Ok(self.path)
+    }
+
+    pub fn cancel(self) {
+        drop(self.stream);
+    }
+}
+
+pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -137,14 +169,13 @@ pub fn record_default_input_to_wav(path: &Path, seconds: u64) -> Result<()> {
     .context("failed to build input stream")?;
 
     stream.play().context("failed to start input stream")?;
-    std::thread::sleep(Duration::from_secs(seconds));
-    drop(stream);
 
-    let samples = samples
-        .lock()
-        .map_err(|_| anyhow::anyhow!("captured audio buffer lock was poisoned"))?;
-    let worker_samples = resample_linear(&samples, sample_rate_hz, WORKER_SAMPLE_RATE_HZ);
-    write_debug_wav(path, &worker_samples, WORKER_SAMPLE_RATE_HZ)
+    Ok(RecordingSession {
+        path,
+        stream,
+        samples,
+        source_rate_hz: sample_rate_hz,
+    })
 }
 
 #[allow(dead_code)]

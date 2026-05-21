@@ -30,3 +30,17 @@ cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs -
 
 The record command uses the default input device, mixes input to mono, resamples
 to 16 kHz, and writes a 16-bit PCM WAV.
+
+Transcribe an audio file through the Rust-controlled whisper.cpp backend:
+
+```powershell
+cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs -- transcribe .\sample.wav --device cpu --model medium_en_q8
+```
+
+The transcribe command resolves `asr/config/whispercpp-profiles.json`, validates
+the configured model file, runs the selected `whisper-cli`, and prints the final
+text. Worker file transcription can use the same backend by setting:
+
+```powershell
+$env:OPENWHISPER_ASR_ENGINE = "whispercpp"
+```

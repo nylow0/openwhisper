@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use audio_capture::record_default_input_to_wav;
+use engine::{AsrEngine, WhisperCppEngine};
 
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -18,12 +19,25 @@ fn main() -> anyhow::Result<()> {
     match parse_args(std::env::args().skip(1).collect())? {
         Command::Worker => worker::run_stdio(),
         Command::Record { path, seconds } => record_default_input_to_wav(&path, seconds),
+        Command::Transcribe {
+            path,
+            model,
+            device,
+        } => transcribe_file(&path, &model, &device),
     }
 }
 
 enum Command {
     Worker,
-    Record { path: PathBuf, seconds: u64 },
+    Record {
+        path: PathBuf,
+        seconds: u64,
+    },
+    Transcribe {
+        path: PathBuf,
+        model: String,
+        device: String,
+    },
 }
 
 fn parse_args(args: Vec<String>) -> anyhow::Result<Command> {
@@ -31,10 +45,14 @@ fn parse_args(args: Vec<String>) -> anyhow::Result<Command> {
         return Ok(Command::Worker);
     }
 
-    if args[0] != "record" {
-        anyhow::bail!("unsupported command: {}", args[0]);
+    match args[0].as_str() {
+        "record" => parse_record_args(&args),
+        "transcribe" => parse_transcribe_args(&args),
+        other => anyhow::bail!("unsupported command: {other}"),
     }
+}
 
+fn parse_record_args(args: &[String]) -> anyhow::Result<Command> {
     let path = args
         .get(1)
         .map(PathBuf::from)
@@ -61,6 +79,50 @@ fn parse_args(args: Vec<String>) -> anyhow::Result<Command> {
     }
 
     Ok(Command::Record { path, seconds })
+}
+
+fn parse_transcribe_args(args: &[String]) -> anyhow::Result<Command> {
+    let path = args
+        .get(1)
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("transcribe requires an input audio path"))?;
+    let mut model = "medium_en_q8".to_string();
+    let mut device = "auto".to_string();
+    let mut index = 2;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--model" => {
+                model = args
+                    .get(index + 1)
+                    .ok_or_else(|| anyhow::anyhow!("--model requires a value"))?
+                    .to_string();
+                index += 2;
+            }
+            "--device" => {
+                device = args
+                    .get(index + 1)
+                    .ok_or_else(|| anyhow::anyhow!("--device requires a value"))?
+                    .to_string();
+                index += 2;
+            }
+            other => anyhow::bail!("unsupported transcribe argument: {other}"),
+        }
+    }
+
+    Ok(Command::Transcribe {
+        path,
+        model,
+        device,
+    })
+}
+
+fn transcribe_file(path: &PathBuf, model: &str, device: &str) -> anyhow::Result<()> {
+    let mut engine = WhisperCppEngine::default();
+    engine.load_model(model, device)?;
+    let result = engine.transcribe_file(path)?;
+    println!("{}", result.text);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -91,7 +153,33 @@ mod tests {
                 assert_eq!(path, PathBuf::from("sample.wav"));
                 assert_eq!(seconds, 30);
             }
-            Command::Worker => panic!("expected record command"),
+            _ => panic!("expected record command"),
+        }
+    }
+
+    #[test]
+    fn transcribe_command_accepts_model_and_device_options() {
+        let command = parse_args(vec![
+            "transcribe".to_string(),
+            "sample.wav".to_string(),
+            "--model".to_string(),
+            "turbo".to_string(),
+            "--device".to_string(),
+            "cpu".to_string(),
+        ])
+        .unwrap();
+
+        match command {
+            Command::Transcribe {
+                path,
+                model,
+                device,
+            } => {
+                assert_eq!(path, PathBuf::from("sample.wav"));
+                assert_eq!(model, "turbo");
+                assert_eq!(device, "cpu");
+            }
+            _ => panic!("expected transcribe command"),
         }
     }
 }

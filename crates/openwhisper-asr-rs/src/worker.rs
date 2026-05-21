@@ -6,7 +6,7 @@ use anyhow::Result;
 
 use crate::audio_capture::{list_input_devices, start_default_recording_session, RecordingSession};
 use crate::buffering::{RingPcmBuffer, WindowPolicy};
-use crate::engine::{mock_words, AsrEngine, MockEngine};
+use crate::engine::{mock_words, AsrEngine, MockEngine, WhisperCppEngine};
 use crate::protocol::{protocol_error, WorkerCommand, WorkerEvent};
 use crate::vad::{is_speech, VadConfig};
 
@@ -23,20 +23,26 @@ where
     R: BufRead,
     W: Write,
 {
-    run_worker_with_recorder_factory(reader, writer, default_recorder_factory)
+    run_worker_with_dependencies(
+        reader,
+        writer,
+        default_recorder_factory,
+        worker_engine_from_env(),
+    )
 }
 
-fn run_worker_with_recorder_factory<R, W, F>(
+fn run_worker_with_dependencies<R, W, F>(
     reader: R,
     mut writer: W,
     recorder_factory: F,
+    engine: Box<dyn AsrEngine>,
 ) -> anyhow::Result<()>
 where
     R: BufRead,
     W: Write,
     F: FnMut() -> Result<Box<dyn ActiveRecording>>,
 {
-    let mut state = WorkerState::new(recorder_factory);
+    let mut state = WorkerState::new(recorder_factory, engine);
 
     for line in reader.lines() {
         let line = line?;
@@ -84,7 +90,7 @@ struct WorkerState<F>
 where
     F: FnMut() -> Result<Box<dyn ActiveRecording>>,
 {
-    engine: MockEngine,
+    engine: Box<dyn AsrEngine>,
     is_model_loaded: bool,
     recording: Option<Box<dyn ActiveRecording>>,
     recorder_factory: F,
@@ -94,9 +100,9 @@ impl<F> WorkerState<F>
 where
     F: FnMut() -> Result<Box<dyn ActiveRecording>>,
 {
-    fn new(recorder_factory: F) -> Self {
+    fn new(recorder_factory: F, engine: Box<dyn AsrEngine>) -> Self {
         Self {
-            engine: MockEngine::default(),
+            engine,
             is_model_loaded: false,
             recording: None,
             recorder_factory,
@@ -258,6 +264,17 @@ fn default_recorder_factory() -> Result<Box<dyn ActiveRecording>> {
     Ok(Box::new(session))
 }
 
+fn worker_engine_from_env() -> Box<dyn AsrEngine> {
+    match std::env::var("OPENWHISPER_ASR_ENGINE")
+        .unwrap_or_else(|_| "mock".to_string())
+        .to_lowercase()
+        .as_str()
+    {
+        "whispercpp" => Box::new(WhisperCppEngine::default()),
+        _ => Box::new(MockEngine::default()),
+    }
+}
+
 fn default_recording_path() -> PathBuf {
     std::env::temp_dir().join(format!(
         "openwhisper-asr-rs-{}-{}.wav",
@@ -280,7 +297,7 @@ mod tests {
 
     use serde_json::Value;
 
-    use super::{run_worker_with_recorder_factory, unix_timestamp_nanos, ActiveRecording};
+    use super::{run_worker_with_dependencies, unix_timestamp_nanos, ActiveRecording};
 
     const V1_COMMANDS: &str = include_str!("../../../asr/test_data/protocol/v1_commands.ndjson");
 
@@ -307,10 +324,11 @@ mod tests {
 
     fn run_with_recording_path(input: &str, path: PathBuf) -> Vec<Value> {
         let mut output = Vec::new();
-        run_worker_with_recorder_factory(
+        run_worker_with_dependencies(
             BufReader::new(Cursor::new(input.as_bytes())),
             &mut output,
             || Ok(Box::new(FakeRecording { path: path.clone() })),
+            Box::new(crate::engine::MockEngine::default()),
         )
         .unwrap();
         String::from_utf8(output)

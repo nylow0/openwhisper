@@ -30,6 +30,7 @@ const SUPPORTED_SPOKEN_LANGUAGES = new Set<AsrLanguageCode>(
   SUPPORTED_ASR_LANGUAGES.map((language) => language.id)
 );
 const WINDOWS_APP_USER_MODEL_ID = 'com.openwhisper.desktop';
+const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
 type StoredSettings = Partial<Omit<AppSettings, 'model' | 'spokenLanguages' | 'autoDetectLanguage'>> & {
   model?: unknown;
   spokenLanguages?: unknown;
@@ -73,13 +74,42 @@ function normalizeSettings(storedSettings: StoredSettings): AppSettings {
   const model = isAsrModel(nextSettings.model) ? nextSettings.model : DEFAULT_SETTINGS.model;
   const autoDetectLanguage =
     model === 'large_v3_turbo_q8' && nextSettings.autoDetectLanguage === true;
+  const launchAtLogin = nextSettings.launchAtLogin === true;
+  const showWindowOnLaunch = nextSettings.showWindowOnLaunch !== false;
 
   return {
     ...nextSettings,
     model,
+    device: normalizeDevice(nextSettings.device),
     spokenLanguages: normalizeSpokenLanguages(nextSettings.spokenLanguages, model),
     autoDetectLanguage,
+    launchAtLogin,
+    showWindowOnLaunch,
   };
+}
+
+function normalizeDevice(value: unknown): AppSettings['device'] {
+  return value === 'auto' || value === 'cpu' || value === 'gpu' ? value : DEFAULT_SETTINGS.device;
+}
+
+function isLoopbackDevServer(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    const isHttp = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    return isHttp && LOCALHOST_HOSTNAMES.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function resolveDevServerUrl(): string | undefined {
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (!devServerUrl) return undefined;
+  if (isLoopbackDevServer(devServerUrl)) return devServerUrl;
+  console.warn(
+    `[Security] Ignoring non-loopback VITE_DEV_SERVER_URL: ${devServerUrl}. Falling back to bundled renderer.`
+  );
+  return undefined;
 }
 
 function loadSettings(): AppSettings {
@@ -109,7 +139,7 @@ function createMainWindow(): void {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -147,7 +177,7 @@ function createOverlayWindow(): void {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -194,8 +224,9 @@ function showMainWindow(): void {
 
 async function loadMainWindow(): Promise<void> {
   if (!mainWindow) throw new Error('Main window has not been created');
-  if (process.env.VITE_DEV_SERVER_URL) {
-    await mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+  const devServerUrl = resolveDevServerUrl();
+  if (devServerUrl) {
+    await mainWindow.loadURL(devServerUrl);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
     return;
   }
@@ -204,8 +235,9 @@ async function loadMainWindow(): Promise<void> {
 
 async function loadOverlayWindow(): Promise<void> {
   if (!overlayWindow) throw new Error('Overlay window has not been created');
-  if (process.env.VITE_DEV_SERVER_URL) {
-    await overlayWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}/overlay.html`);
+  const devServerUrl = resolveDevServerUrl();
+  if (devServerUrl) {
+    await overlayWindow.loadURL(`${devServerUrl}/overlay.html`);
     return;
   }
   await overlayWindow.loadFile(path.join(__dirname, '../renderer/overlay.html'));
@@ -244,7 +276,7 @@ function rustEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     OPENWHISPER_ASR_MODEL: settings.model,
-    OPENWHISPER_ASR_DEVICE: settings.device,
+    OPENWHISPER_ASR_DEVICE: normalizeDevice(settings.device),
     OPENWHISPER_ASR_LANGUAGES: settings.spokenLanguages.join(','),
     OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE: settings.autoDetectLanguage ? '1' : '0',
   };

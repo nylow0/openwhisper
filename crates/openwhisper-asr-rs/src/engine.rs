@@ -250,7 +250,11 @@ impl WhisperCppEngine {
         let model_path = model_dir.join(&model.file);
 
         if !model_path.is_file() {
-            anyhow::bail!("model file does not exist: {}", model_path.display());
+            anyhow::bail!(
+                "model file does not exist: {}. Set {} to the OpenWhisper model directory or reinstall with model assets",
+                model_path.display(),
+                config.model_dir.env
+            );
         }
 
         let actual_size = model_path
@@ -492,6 +496,12 @@ fn local_binary_candidates(binary_hint: &str) -> &'static [&'static str] {
 }
 
 fn default_config_path() -> PathBuf {
+    if let Ok(value) = std::env::var("OPENWHISPER_WHISPERCPP_CONFIG") {
+        if !value.trim().is_empty() {
+            return PathBuf::from(value);
+        }
+    }
+
     find_workspace_root()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("asr")

@@ -322,8 +322,13 @@ impl AsrEngine for WhisperCppEngine {
         let json_path = output_base.with_extension("json");
         let file = std::fs::File::open(&json_path).with_context(|| {
             format!(
-                "whisper.cpp did not create JSON output at {}",
-                json_path.display()
+                "whisper.cpp did not create JSON output at {}. stdout/stderr tail: {}",
+                json_path.display(),
+                tail(&format!(
+                    "{}\n{}",
+                    String::from_utf8_lossy(&completed.stdout),
+                    String::from_utf8_lossy(&completed.stderr)
+                ))
             )
         })?;
         let payload: Value = serde_json::from_reader(file).with_context(|| {

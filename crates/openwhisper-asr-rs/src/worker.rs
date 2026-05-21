@@ -5,12 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 
 use crate::audio_capture::{list_input_devices, start_default_recording_session, RecordingSession};
-use crate::buffering::{RingPcmBuffer, WindowPolicy};
-use crate::engine::{mock_words, AsrEngine, MockEngine, WhisperCppEngine};
+use crate::engine::{AsrEngine, MockEngine, WhisperCppEngine};
 use crate::protocol::{protocol_error, WorkerCommand, WorkerEvent};
-use crate::vad::{is_speech, VadConfig};
-
-const MOCK_SENTENCE: &str = "Hello world this is a test of the OpenWhisper dictation system";
 
 pub fn run_stdio() -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -140,9 +136,13 @@ where
     }
 
     fn load_model(&mut self, model: Option<String>, device: Option<String>) -> WorkerEvent {
+        let default_model =
+            std::env::var("OPENWHISPER_ASR_MODEL").unwrap_or_else(|_| "medium_en_q8".to_string());
+        let default_device =
+            std::env::var("OPENWHISPER_ASR_DEVICE").unwrap_or_else(|_| "cpu".to_string());
         match self.engine.load_model(
-            model.as_deref().unwrap_or("mock"),
-            device.as_deref().unwrap_or("cpu"),
+            model.as_deref().unwrap_or(&default_model),
+            device.as_deref().unwrap_or(&default_device),
         ) {
             Ok(info) => {
                 self.is_model_loaded = true;
@@ -169,7 +169,7 @@ where
 
         let mut events = Vec::new();
         if !self.is_model_loaded {
-            events.push(self.load_model(Some("mock".to_string()), Some("cpu".to_string())));
+            events.push(self.load_model(None, None));
         }
 
         match (self.recorder_factory)() {
@@ -204,22 +204,9 @@ where
             }
         };
 
-        let policy = WindowPolicy::dictation_default();
-        let mut ring = RingPcmBuffer::new(policy.window_samples());
-        ring.push_chunk(&vec![0.03; policy.samples_for_ms(250)]);
-        let speech_detected = is_speech(
-            &ring.tail_window(policy.samples_for_ms(250)),
-            VadConfig::default(),
-        );
-
-        let text = if speech_detected { MOCK_SENTENCE } else { "" };
-        let _ = std::fs::remove_file(&recording_path);
-        vec![WorkerEvent::TranscriptFinal {
-            text: text.to_string(),
-            words: mock_words(text),
-            language: Some("en".to_string()),
-            processing_latency_ms: 1,
-        }]
+        let event = self.transcribe_file(&recording_path);
+        let _ = std::fs::remove_file(recording_path);
+        vec![event]
     }
 
     fn transcribe_file(&mut self, audio_path: &Path) -> WorkerEvent {
@@ -293,9 +280,11 @@ fn unix_timestamp_nanos() -> u128 {
 #[cfg(test)]
 mod tests {
     use std::io::{BufReader, Cursor};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use serde_json::Value;
+
+    use crate::engine::{AsrEngine, ModelLoadInfo, Transcription};
 
     use super::{run_worker_with_dependencies, unix_timestamp_nanos, ActiveRecording};
 
@@ -305,6 +294,9 @@ mod tests {
         path: PathBuf,
     }
 
+    #[derive(Debug)]
+    struct FailingEngine;
+
     impl ActiveRecording for FakeRecording {
         fn stop(self: Box<Self>) -> anyhow::Result<PathBuf> {
             std::fs::write(&self.path, b"fake wav")?;
@@ -312,6 +304,19 @@ mod tests {
         }
 
         fn cancel(self: Box<Self>) {}
+    }
+
+    impl AsrEngine for FailingEngine {
+        fn load_model(&mut self, _model: &str, _device: &str) -> anyhow::Result<ModelLoadInfo> {
+            Ok(ModelLoadInfo {
+                device: "cpu".to_string(),
+                memory_mb: 0.0,
+            })
+        }
+
+        fn transcribe_file(&mut self, _audio_path: &Path) -> anyhow::Result<Transcription> {
+            anyhow::bail!("decode failed")
+        }
     }
 
     fn run(input: &str) -> Vec<Value> {
@@ -323,12 +328,24 @@ mod tests {
     }
 
     fn run_with_recording_path(input: &str, path: PathBuf) -> Vec<Value> {
+        run_with_recording_path_and_engine(
+            input,
+            path,
+            Box::new(crate::engine::MockEngine::default()),
+        )
+    }
+
+    fn run_with_recording_path_and_engine(
+        input: &str,
+        path: PathBuf,
+        engine: Box<dyn AsrEngine>,
+    ) -> Vec<Value> {
         let mut output = Vec::new();
         run_worker_with_dependencies(
             BufReader::new(Cursor::new(input.as_bytes())),
             &mut output,
             || Ok(Box::new(FakeRecording { path: path.clone() })),
-            Box::new(crate::engine::MockEngine::default()),
+            engine,
         )
         .unwrap();
         String::from_utf8(output)
@@ -353,7 +370,10 @@ mod tests {
 
         assert_eq!(lines[0]["type"], "model.loaded");
         assert_eq!(lines[1]["type"], "transcript.final");
-        assert!(lines[1]["text"].as_str().unwrap().contains("OpenWhisper"));
+        assert!(lines[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Mock transcript for openwhisper-asr-rs-test"));
     }
 
     #[test]
@@ -369,6 +389,31 @@ mod tests {
         );
 
         assert_eq!(lines[1]["type"], "transcript.final");
+        assert_eq!(
+            lines[1]["text"],
+            format!(
+                "Mock transcript for {}",
+                path.file_name().unwrap().to_string_lossy()
+            )
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn dictation_stop_removes_temp_recording_when_transcription_fails() {
+        let path = std::env::temp_dir().join(format!(
+            "openwhisper-asr-rs-error-cleanup-test-{}.wav",
+            unix_timestamp_nanos()
+        ));
+
+        let lines = run_with_recording_path_and_engine(
+            "{\"type\":\"dictation.start\"}\n{\"type\":\"dictation.stop\"}",
+            path.clone(),
+            Box::new(FailingEngine),
+        );
+
+        assert_eq!(lines[1]["type"], "transcript.error");
+        assert_eq!(lines[1]["error"], "decode failed");
         assert!(!path.exists());
     }
 

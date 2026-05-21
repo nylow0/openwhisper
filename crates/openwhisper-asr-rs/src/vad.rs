@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VadConfig {
     pub rms_threshold: f32,

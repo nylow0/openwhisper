@@ -259,8 +259,10 @@ function findProjectRoot(): string {
       const hasNativeCrate = fs.existsSync(
         path.join(current, 'crates', 'openwhisper-native', 'Cargo.toml')
       );
-      const hasAsrPackage = fs.existsSync(path.join(current, 'asr', 'pyproject.toml'));
-      if (hasNativeCrate && hasAsrPackage) return current;
+      const hasAsrConfig = fs.existsSync(
+        path.join(current, 'config', 'whispercpp-profiles.json')
+      );
+      if (hasNativeCrate && hasAsrConfig) return current;
 
       const parent = path.dirname(current);
       if (parent === current) break;
@@ -271,14 +273,36 @@ function findProjectRoot(): string {
   throw new Error('Could not find OpenWhisper project root from packaged app location');
 }
 
-/** Environment for the Rust helper — carries ASR model/device down to Python. */
+/** Environment for the Rust helper and its selected ASR worker. */
+function packagedAssetPath(...parts: string[]): string {
+  return path.join(process.resourcesPath, ...parts);
+}
+
 function rustEnv(): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     OPENWHISPER_ASR_MODEL: settings.model,
     OPENWHISPER_ASR_DEVICE: normalizeDevice(settings.device),
     OPENWHISPER_ASR_LANGUAGES: settings.spokenLanguages.join(','),
     OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE: settings.autoDetectLanguage ? '1' : '0',
+  };
+
+  if (!app.isPackaged) return env;
+
+  return {
+    ...env,
+    OPENWHISPER_WHISPERCPP_CONFIG: packagedAssetPath('config', 'whispercpp-profiles.json'),
+    OPENWHISPER_MODEL_DIR: packagedAssetPath('models'),
+    OPENWHISPER_WHISPERCPP_CPU_EXE: packagedAssetPath(
+      'whispercpp',
+      'cpu',
+      'whisper-cli.exe'
+    ),
+    OPENWHISPER_WHISPERCPP_GPU_EXE: packagedAssetPath(
+      'whispercpp',
+      'gpu',
+      'whisper-cli.exe'
+    ),
   };
 }
 
@@ -286,7 +310,7 @@ function startRustHelper(): Promise<string> {
   return new Promise((resolve, reject) => {
     const electronPid = process.pid;
     const pipeName = `\\\\.\\pipe\\OpenWhisper-${electronPid}`;
-    const projectRoot = findProjectRoot();
+    const projectRoot = app.isPackaged ? process.resourcesPath : findProjectRoot();
     const binaryPaths = [
       path.join(
         projectRoot,
@@ -308,6 +332,7 @@ function startRustHelper(): Promise<string> {
     ];
     const rustCwd = path.join(projectRoot, 'crates', 'openwhisper-native');
     const binaryPath = binaryPaths.find((candidate) => fs.existsSync(candidate));
+    const packagedBinaryPath = packagedAssetPath('native', 'openwhisper-native.exe');
     let settled = false;
 
     const settleReady = (): void => {
@@ -316,7 +341,18 @@ function startRustHelper(): Promise<string> {
       resolve(pipeName);
     };
 
-    rustProcess = binaryPath
+    if (app.isPackaged && !fs.existsSync(packagedBinaryPath)) {
+      reject(new Error(`Bundled Rust helper is missing: ${packagedBinaryPath}`));
+      return;
+    }
+
+    rustProcess = app.isPackaged
+      ? spawn(packagedBinaryPath, ['--pipe-pid', String(electronPid)], {
+          cwd: projectRoot,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: rustEnv(),
+        })
+      : binaryPath
       ? spawn(binaryPath, ['--pipe-pid', String(electronPid)], {
           cwd: projectRoot,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -358,7 +394,7 @@ function startRustHelper(): Promise<string> {
   });
 }
 
-/** Restarts the Rust helper + Python worker so settings changes take effect. */
+/** Restarts the Rust helper and selected ASR worker so settings changes take effect. */
 async function restartEngine(): Promise<{ ok: boolean; error?: string }> {
   disconnectRust();
   rustProcess?.kill();

@@ -10,11 +10,11 @@ pub struct WordResult {
     pub confidence: Option<f32>,
 }
 
-// ─── Messages Rust → Python ───
+// Messages native helper -> ASR worker.
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "type")]
-pub enum ToPython {
+pub enum ToWorker {
     #[serde(rename = "health.check")]
     HealthCheck { timestamp: u64 },
 
@@ -25,11 +25,11 @@ pub enum ToPython {
     DictationStop,
 }
 
-// ─── Messages Python → Rust ───
+// Messages ASR worker -> native helper.
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
-pub enum FromPython {
+pub enum FromWorker {
     #[serde(rename = "health.ok")]
     HealthOk { timestamp: u64, status: String },
 

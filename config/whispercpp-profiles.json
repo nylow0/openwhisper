@@ -4,7 +4,7 @@
   "benchmark_audio_seconds": 136.52,
   "model_dir": {
     "env": "OPENWHISPER_MODEL_DIR",
-    "default_relative_to_config": "../../models"
+    "default_relative_to_config": "../models"
   },
   "models": {
     "medium_en_q8": {
@@ -35,6 +35,15 @@
       "binary_hint": "cpu_avx_vnni",
       "model": "medium_en_q8",
       "args": ["-l", "en", "-nt", "-oj", "-np", "-t", "16", "-ac", "1024"],
+      "vad": {
+        "rms_threshold": 0.015,
+        "silence_ms": 900
+      },
+      "streaming": {
+        "step_ms": 500,
+        "length_ms": 5000,
+        "keep_ms": 500
+      },
       "benchmark": {
         "wer_percent": 2.19,
         "first_result_seconds": 2.71,
@@ -49,6 +58,15 @@
       "binary_hint": "cpu_avx_vnni",
       "model": "large_v3_turbo_q8",
       "args": ["-l", "auto", "-nt", "-oj", "-np", "-t", "16", "-ac", "1024"],
+      "vad": {
+        "rms_threshold": 0.015,
+        "silence_ms": 900
+      },
+      "streaming": {
+        "step_ms": 500,
+        "length_ms": 5000,
+        "keep_ms": 500
+      },
       "benchmark": {
         "wer_percent": null,
         "first_result_seconds": null,
@@ -63,6 +81,15 @@
       "binary_hint": "gpu_cuda_sm120",
       "model": "medium_en_q8",
       "args": ["-l", "en", "-nt", "-oj", "-np"],
+      "vad": {
+        "rms_threshold": 0.015,
+        "silence_ms": 900
+      },
+      "streaming": {
+        "step_ms": 500,
+        "length_ms": 5000,
+        "keep_ms": 500
+      },
       "benchmark": {
         "wer_percent": 2.39,
         "first_result_seconds": 1.25,
@@ -77,6 +104,15 @@
       "binary_hint": "gpu_cuda_sm120",
       "model": "large_v3_turbo_q8",
       "args": ["-l", "auto", "-nt", "-oj", "-np"],
+      "vad": {
+        "rms_threshold": 0.015,
+        "silence_ms": 900
+      },
+      "streaming": {
+        "step_ms": 500,
+        "length_ms": 5000,
+        "keep_ms": 500
+      },
       "benchmark": {
         "wer_percent": 2.39,
         "first_result_seconds": 1.08,

@@ -1,9 +1,5 @@
-﻿.venv/
+﻿.local/
+.venv/
 __pycache__/
-*.py[cod]
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.local/
-test_data/samples/*
-!test_data/samples/.gitkeep
+.uv-cache/

@@ -7,6 +7,8 @@ product-owned model assets in the repo-level `models/` directory. Runtime code
 should resolve the model directory from `OPENWHISPER_MODEL_DIR`, falling back to
 the local path described in `whispercpp-profiles.json` for development.
 
+Local whisper.cpp build outputs live under `asr/.local/`. See `asr/README.md`.
+
 ## Recommended Profiles
 
 | Profile | Use case |
@@ -19,3 +21,12 @@ the local path described in `whispercpp-profiles.json` for development.
 Benchmarks were run on 25 LibriSpeech `test-other` clips totaling `136.52s` of
 audio. `first_result_seconds` is the time until the first per-sample transcript
 JSON appeared.
+
+Rust streaming dictation reads each profile's `vad.rms_threshold` and
+`vad.silence_ms` defaults. `OPENWHISPER_ASR_VAD_RMS_THRESHOLD` and
+`OPENWHISPER_ASR_VAD_SILENCE_MS` override them for local tuning.
+
+`streaming.step_ms`, `streaming.length_ms`, and `streaming.keep_ms` configure
+Rust live decode windows. `OPENWHISPER_ASR_STREAM_STEP_MS`,
+`OPENWHISPER_ASR_STREAM_LENGTH_MS`, and `OPENWHISPER_ASR_STREAM_KEEP_MS`
+override them while measuring latency and decoder pressure.

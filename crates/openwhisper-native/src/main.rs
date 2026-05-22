@@ -9,13 +9,13 @@ mod inject;
 mod ipc;
 mod ipc_protocol;
 mod protocol;
-mod python;
+mod worker;
 
 use hotkey::HotkeyEvent;
 use ipc::IpcServer;
 use ipc_protocol::{IpcCommand, IpcEvent};
-use protocol::{FromPython, ToPython};
-use python::PythonWorker;
+use protocol::{FromWorker, ToWorker};
+use worker::AsrWorker;
 
 #[derive(Debug, Clone)]
 struct AppState {
@@ -59,9 +59,10 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Spawn Python worker
-    let mut python_worker = PythonWorker::spawn().await?;
-    log::info!("Python worker spawned");
+    // Spawn the protocol-compatible Rust ASR worker.
+    let mut asr_worker = AsrWorker::spawn().await?;
+    let asr_worker_label = asr_worker.label();
+    log::info!("{} ASR worker spawned", asr_worker_label);
 
     // Shared state
     let state = Arc::new(RwLock::new(AppState {
@@ -99,16 +100,16 @@ async fn main() -> Result<()> {
                                     .unwrap_or_default()
                                     .as_secs(),
                             }).await;
-                            if let Err(e) = python_worker.send(ToPython::DictationStart).await {
-                                log::error!("Failed to send dictation.start to Python: {}", e);
+                            if let Err(e) = asr_worker.send(ToWorker::DictationStart).await {
+                                log::error!("Failed to send dictation.start to {} ASR worker: {}", asr_worker_label, e);
                             }
                         }
                         IpcCommand::DictationStop => {
                             log::info!("Received dictation.stop from Electron");
                             s.is_dictating = false;
                             drop(s);
-                            if let Err(e) = python_worker.send(ToPython::DictationStop).await {
-                                log::error!("Failed to send dictation.stop to Python: {}", e);
+                            if let Err(e) = asr_worker.send(ToWorker::DictationStop).await {
+                                log::error!("Failed to send dictation.stop to {} ASR worker: {}", asr_worker_label, e);
                             }
                             let _ = ipc_event_tx.send(IpcEvent::DictationStopped {
                                 timestamp: std::time::SystemTime::now()
@@ -149,8 +150,8 @@ async fn main() -> Result<()> {
                                 log::info!("Hotkey released — stopping dictation");
                                 s.is_dictating = false;
                                 drop(s);
-                                if let Err(e) = python_worker.send(ToPython::DictationStop).await {
-                                    log::error!("Failed to send dictation.stop to Python: {}", e);
+                                if let Err(e) = asr_worker.send(ToWorker::DictationStop).await {
+                                    log::error!("Failed to send dictation.stop to {} ASR worker: {}", asr_worker_label, e);
                                 }
                                 let _ = ipc_event_tx.send(IpcEvent::DictationStopped {
                                     timestamp: unix_secs(),
@@ -169,25 +170,25 @@ async fn main() -> Result<()> {
                         let _ = ipc_event_tx.send(IpcEvent::DictationStarted {
                             timestamp: unix_secs(),
                         }).await;
-                        if let Err(e) = python_worker.send(ToPython::DictationStart).await {
-                            log::error!("Failed to send dictation.start to Python: {}", e);
+                        if let Err(e) = asr_worker.send(ToWorker::DictationStart).await {
+                            log::error!("Failed to send dictation.start to {} ASR worker: {}", asr_worker_label, e);
                         }
                     }
                 }
-                Some(event) = python_worker.recv() => {
+                Some(event) = asr_worker.recv() => {
                     match event {
-                        FromPython::HealthOk { timestamp, status } => {
-                            log::debug!("Python health.ok: ts={}, status={}", timestamp, status);
+                        FromWorker::HealthOk { timestamp, status } => {
+                            log::debug!("{} ASR health.ok: ts={}, status={}", asr_worker_label, timestamp, status);
                             let mut s = state_clone.write().await;
                             s.worker_healthy = true;
                         }
-                        FromPython::ModelLoaded { device, memory_mb } => {
-                            log::info!("Python model.loaded: device={}, memory={}MB", device, memory_mb);
+                        FromWorker::ModelLoaded { device, memory_mb } => {
+                            log::info!("{} ASR model.loaded: device={}, memory={}MB", asr_worker_label, device, memory_mb);
                             let mut s = state_clone.write().await;
                             s.is_model_loaded = true;
                         }
-                        FromPython::ModelError { error, recoverable } => {
-                            log::error!("Python model.error: {} (recoverable={})", error, recoverable);
+                        FromWorker::ModelError { error, recoverable } => {
+                            log::error!("{} ASR model.error: {} (recoverable={})", asr_worker_label, error, recoverable);
                             let mut s = state_clone.write().await;
                             s.is_dictating = false;
                             let _ = ipc_event_tx.send(IpcEvent::Error {
@@ -196,14 +197,14 @@ async fn main() -> Result<()> {
                                 recoverable,
                             }).await;
                         }
-                        FromPython::TranscriptPartial { text, is_final, processing_latency_ms } => {
+                        FromWorker::TranscriptPartial { text, is_final, processing_latency_ms } => {
                             let _ = ipc_event_tx.send(IpcEvent::TranscriptPartial {
                                 text,
                                 is_final,
                                 processing_latency_ms,
                             }).await;
                         }
-                        FromPython::TranscriptFinal { text, words, language, processing_latency_ms } => {
+                        FromWorker::TranscriptFinal { text, words, language, processing_latency_ms } => {
                             if !text.trim().is_empty() {
                                 let to_type = text.clone();
                                 tokio::task::spawn_blocking(move || inject::type_text(&to_type));
@@ -215,16 +216,16 @@ async fn main() -> Result<()> {
                                 processing_latency_ms,
                             }).await;
                         }
-                        FromPython::TranscriptError { error, chunk_timestamp } => {
-                            log::error!("Python transcript.error at {}: {}", chunk_timestamp, error);
+                        FromWorker::TranscriptError { error, chunk_timestamp } => {
+                            log::error!("{} ASR transcript.error at {}: {}", asr_worker_label, chunk_timestamp, error);
                             let _ = ipc_event_tx.send(IpcEvent::Error {
                                 code: "TRANSCRIPT_ERROR".to_string(),
                                 message: error,
                                 recoverable: true,
                             }).await;
                         }
-                        FromPython::AudioError { error, code } => {
-                            log::error!("Python audio.error ({}): {}", code, error);
+                        FromWorker::AudioError { error, code } => {
+                            log::error!("{} ASR audio.error ({}): {}", asr_worker_label, code, error);
                             let mut s = state_clone.write().await;
                             s.is_dictating = false;
                             let _ = ipc_event_tx.send(IpcEvent::Error {
@@ -233,8 +234,8 @@ async fn main() -> Result<()> {
                                 recoverable: true,
                             }).await;
                         }
-                        FromPython::Error { code, message, recoverable } => {
-                            log::error!("Python error: {} (recoverable={})", message, recoverable);
+                        FromWorker::Error { code, message, recoverable } => {
+                            log::error!("{} ASR error: {} (recoverable={})", asr_worker_label, message, recoverable);
                             let _ = ipc_event_tx.send(IpcEvent::Error {
                                 code: code.unwrap_or_else(|| "WORKER_ERROR".to_string()),
                                 message,

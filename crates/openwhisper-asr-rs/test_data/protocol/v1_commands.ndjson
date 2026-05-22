@@ -1,0 +1,5 @@
+{"type":"health.check","timestamp":7}
+{"type":"model.load","model":"medium_en_q8","device":"cpu"}
+{"type":"dictation.start"}
+{"type":"dictation.stop"}
+{"type":"shutdown"}

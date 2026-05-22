@@ -1,0 +1,8 @@
+{"type":"health.ok","timestamp":7,"status":"ready"}
+{"type":"model.loaded","device":"cpu","memory_mb":0.0}
+{"type":"model.error","error":"model load failed","recoverable":true}
+{"type":"transcript.partial","text":"hello","is_final":false,"processing_latency_ms":12}
+{"type":"transcript.final","text":"hello world","words":[{"text":"hello","start_ms":0,"end_ms":320,"confidence":0.92},{"text":"world","start_ms":360,"end_ms":720,"confidence":0.91}],"language":"en","processing_latency_ms":42}
+{"type":"transcript.error","error":"decode failed","chunk_timestamp":7}
+{"type":"audio.error","error":"microphone unavailable","code":"AUDIO_RECORDING_FAILED"}
+{"type":"error","code":"PROTOCOL_ERROR","message":"Invalid JSON","recoverable":true}

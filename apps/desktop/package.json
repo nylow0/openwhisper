@@ -13,7 +13,9 @@
     "test": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview",
     "electron:dev": "tsc && bun run prepare:preload && vite build && electron .",
-    "electron:build": "tsc && bun run prepare:preload && vite build && electron-builder && bun run update:start-menu",
+    "native:release": "cargo build --manifest-path ../../crates/openwhisper-native/Cargo.toml --release --target x86_64-pc-windows-msvc && cargo build --manifest-path ../../crates/openwhisper-asr-rs/Cargo.toml --release --target x86_64-pc-windows-msvc",
+    "package:smoke": "bun scripts/smoke-package.mjs",
+    "electron:build": "bun run native:release && tsc && bun run prepare:preload && vite build && electron-builder && bun run package:smoke && bun run update:start-menu",
     "update:start-menu": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update-start-menu-shortcut.ps1"
   },
   "dependencies": {
@@ -43,6 +45,44 @@
       "dist/renderer/**/*",
       "dist/shared/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../crates/openwhisper-native/target/x86_64-pc-windows-msvc/release/openwhisper-native.exe",
+        "to": "native/openwhisper-native.exe"
+      },
+      {
+        "from": "../../crates/openwhisper-asr-rs/target/x86_64-pc-windows-msvc/release/ow-asr-rs.exe",
+        "to": "native/ow-asr-rs.exe"
+      },
+      {
+        "from": "../../config/whispercpp-profiles.json",
+        "to": "config/whispercpp-profiles.json"
+      },
+      {
+        "from": "../../models",
+        "to": "models",
+        "filter": [
+          "ggml-medium.en-q8_0.bin",
+          "ggml-large-v3-turbo-q8_0.bin"
+        ]
+      },
+      {
+        "from": "../../asr/.local/whispercpp-src/build-cpu-avxvnni-local/bin",
+        "to": "whispercpp/cpu",
+        "filter": [
+          "whisper-cli.exe",
+          "*.dll"
+        ]
+      },
+      {
+        "from": "../../asr/.local/whispercpp/cuda-bin/Release",
+        "to": "whispercpp/gpu",
+        "filter": [
+          "whisper-cli.exe",
+          "*.dll"
+        ]
+      }
     ],
     "win": {
       "target": "dir",

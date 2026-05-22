@@ -1,0 +1,6 @@
+[2026-05-22T17:43:37Z INFO  openwhisper_native] OpenWhisper Native Helper starting...
+[2026-05-22T17:43:37Z INFO  openwhisper_native::ipc] Starting IPC server on \\.\pipe\OpenWhisper-99999
+[2026-05-22T17:43:37Z INFO  openwhisper_native::worker] Starting Rust ASR worker via "C:\\Business\\openwhisper\\crates/openwhisper-asr-rs\\target\\debug\\ow-asr-rs.exe"
+[2026-05-22T17:43:37Z INFO  openwhisper_native::ipc] Waiting for Electron to connect...
+[2026-05-22T17:43:38Z INFO  openwhisper_native] Rust ASR worker spawned
+[2026-05-22T17:43:38Z INFO  openwhisper_native::hotkey] Keyboard hook installed — hold Ctrl+Win to dictate

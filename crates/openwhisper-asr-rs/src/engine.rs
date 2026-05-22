@@ -556,7 +556,7 @@ fn run_whisper_cpp(
 ) -> Result<std::process::Output> {
     let mut command = Command::new(&selection.exe_path);
     command
-        .current_dir(asr_root)
+        .current_dir(whisper_cpp_working_dir(&selection.exe_path, asr_root))
         .arg("-m")
         .arg(&selection.model_path)
         .arg("-f")
@@ -578,6 +578,14 @@ fn run_whisper_cpp(
     command
         .output()
         .with_context(|| format!("failed to run {}", selection.exe_path.display()))
+}
+
+fn whisper_cpp_working_dir(exe_path: &Path, fallback: &Path) -> PathBuf {
+    exe_path
+        .parent()
+        .filter(|path| path.is_dir())
+        .unwrap_or(fallback)
+        .to_path_buf()
 }
 
 fn whisper_cpp_subprocess_env(
@@ -864,5 +872,18 @@ mod tests {
         let error = engine.load_model("medium_en_q8", "cpu").unwrap_err();
 
         assert!(error.to_string().contains("model file does not exist"));
+    }
+
+    #[test]
+    fn whisper_cpp_working_dir_uses_executable_folder_for_packaged_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe_dir = dir.path().join("resources").join("whispercpp").join("gpu");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let exe_path = exe_dir.join("whisper-cli.exe");
+        let nonexistent_asr_root = dir.path().join("resources").join("asr");
+
+        let working_dir = super::whisper_cpp_working_dir(&exe_path, &nonexistent_asr_root);
+
+        assert_eq!(working_dir, exe_dir);
     }
 }

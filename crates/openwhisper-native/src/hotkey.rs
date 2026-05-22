@@ -16,6 +16,7 @@ use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
     UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
@@ -37,6 +38,7 @@ const VK_RCONTROL: u32 = 0xA3;
 const VK_CONTROL: u32 = 0x11;
 const VK_LWIN: u32 = 0x5B;
 const VK_RWIN: u32 = 0x5C;
+const KEY_DOWN_MASK: u16 = 0x8000;
 
 static HOTKEY_TX: OnceLock<mpsc::Sender<HotkeyEvent>> = OnceLock::new();
 
@@ -58,6 +60,39 @@ fn is_win(vk: u32) -> bool {
     vk == VK_LWIN || vk == VK_RWIN
 }
 
+fn async_key_down(vk: u32) -> bool {
+    unsafe { (GetAsyncKeyState(vk as i32) as u16 & KEY_DOWN_MASK) != 0 }
+}
+
+fn key_down_after_event(vk_matches: bool, is_down: bool, is_up: bool, async_down: bool) -> bool {
+    // Low-level hooks run before Windows updates async state for this event.
+    if vk_matches && is_down {
+        true
+    } else if vk_matches && is_up {
+        false
+    } else {
+        async_down
+    }
+}
+
+fn ctrl_down_after_event(vk: u32, is_down: bool, is_up: bool) -> bool {
+    key_down_after_event(
+        is_ctrl(vk),
+        is_down,
+        is_up,
+        async_key_down(VK_LCONTROL) || async_key_down(VK_RCONTROL) || async_key_down(VK_CONTROL),
+    )
+}
+
+fn win_down_after_event(vk: u32, is_down: bool, is_up: bool) -> bool {
+    key_down_after_event(
+        is_win(vk),
+        is_down,
+        is_up,
+        async_key_down(VK_LWIN) || async_key_down(VK_RWIN),
+    )
+}
+
 fn emit(event: HotkeyEvent) {
     if let Some(tx) = HOTKEY_TX.get() {
         let _ = tx.try_send(event);
@@ -77,37 +112,37 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
 
     let mut swallow = false;
 
-    if is_ctrl(vk) {
-        if is_down {
-            CTRL_DOWN.store(true, Ordering::Relaxed);
-        } else if is_up {
-            CTRL_DOWN.store(false, Ordering::Relaxed);
-        }
-    } else if is_win(vk) {
-        if is_down {
-            WIN_DOWN.store(true, Ordering::Relaxed);
-            // Win pressed while Ctrl is held → this is the hotkey combo.
-            // Latch suppression so the whole hold is swallowed consistently,
-            // even through key auto-repeat or Ctrl being released first.
-            if CTRL_DOWN.load(Ordering::Relaxed) {
-                WIN_SUPPRESSED.store(true, Ordering::Relaxed);
+    if is_ctrl(vk) || is_win(vk) {
+        let ctrl_down = ctrl_down_after_event(vk, is_down, is_up);
+        let win_down = win_down_after_event(vk, is_down, is_up);
+
+        CTRL_DOWN.store(ctrl_down, Ordering::Relaxed);
+        WIN_DOWN.store(win_down, Ordering::Relaxed);
+
+        if is_win(vk) {
+            if is_down {
+                // Win pressed while Ctrl is held → this is the hotkey combo.
+                // Latch suppression so the whole hold is swallowed consistently,
+                // even through key auto-repeat or Ctrl being released first.
+                if ctrl_down {
+                    WIN_SUPPRESSED.store(true, Ordering::Relaxed);
+                }
+                if WIN_SUPPRESSED.load(Ordering::Relaxed) {
+                    swallow = true;
+                } else {
+                    WIN_DOWN_DELIVERED.store(true, Ordering::Relaxed);
+                }
+            } else if is_up {
+                // Swallow the key-up only if every key-down was swallowed too, so
+                // the OS's view of the Win key stays balanced (never stuck down).
+                if WIN_SUPPRESSED.load(Ordering::Relaxed)
+                    && !WIN_DOWN_DELIVERED.load(Ordering::Relaxed)
+                {
+                    swallow = true;
+                }
+                WIN_SUPPRESSED.store(false, Ordering::Relaxed);
+                WIN_DOWN_DELIVERED.store(false, Ordering::Relaxed);
             }
-            if WIN_SUPPRESSED.load(Ordering::Relaxed) {
-                swallow = true;
-            } else {
-                WIN_DOWN_DELIVERED.store(true, Ordering::Relaxed);
-            }
-        } else if is_up {
-            WIN_DOWN.store(false, Ordering::Relaxed);
-            // Swallow the key-up only if every key-down was swallowed too, so
-            // the OS's view of the Win key stays balanced (never stuck down).
-            if WIN_SUPPRESSED.load(Ordering::Relaxed)
-                && !WIN_DOWN_DELIVERED.load(Ordering::Relaxed)
-            {
-                swallow = true;
-            }
-            WIN_SUPPRESSED.store(false, Ordering::Relaxed);
-            WIN_DOWN_DELIVERED.store(false, Ordering::Relaxed);
         }
     }
 
@@ -168,4 +203,19 @@ pub fn spawn_listener() -> mpsc::Receiver<HotkeyEvent> {
     });
 
     rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_down_after_event;
+
+    #[test]
+    fn current_key_down_wins_over_stale_async_state() {
+        assert!(key_down_after_event(true, true, false, false));
+    }
+
+    #[test]
+    fn current_key_up_wins_over_stale_async_state() {
+        assert!(!key_down_after_event(true, false, true, true));
+    }
 }

@@ -81,6 +81,7 @@ impl AsrWorker {
 
         let mut command = Command::new(&worker_program);
         command
+            .envs(std::env::vars())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());

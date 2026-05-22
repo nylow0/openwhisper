@@ -7,6 +7,8 @@ product-owned model assets in the repo-level `models/` directory. Runtime code
 should resolve the model directory from `OPENWHISPER_MODEL_DIR`, falling back to
 the local path described in `whispercpp-profiles.json` for development.
 
+Local whisper.cpp build outputs live under `asr/.local/`. See `asr/README.md`.
+
 ## Recommended Profiles
 
 | Profile | Use case |

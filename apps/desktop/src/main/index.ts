@@ -227,8 +227,10 @@ function findProjectRoot(): string {
       const hasNativeCrate = fs.existsSync(
         path.join(current, 'crates', 'openwhisper-native', 'Cargo.toml')
       );
-      const hasAsrPackage = fs.existsSync(path.join(current, 'asr', 'pyproject.toml'));
-      if (hasNativeCrate && hasAsrPackage) return current;
+      const hasAsrConfig = fs.existsSync(
+        path.join(current, 'config', 'whispercpp-profiles.json')
+      );
+      if (hasNativeCrate && hasAsrConfig) return current;
 
       const parent = path.dirname(current);
       if (parent === current) break;
@@ -257,7 +259,7 @@ function rustEnv(): NodeJS.ProcessEnv {
 
   return {
     ...env,
-    OPENWHISPER_WHISPERCPP_CONFIG: packagedAssetPath('asr', 'config', 'whispercpp-profiles.json'),
+    OPENWHISPER_WHISPERCPP_CONFIG: packagedAssetPath('config', 'whispercpp-profiles.json'),
     OPENWHISPER_MODEL_DIR: packagedAssetPath('models'),
     OPENWHISPER_WHISPERCPP_CPU_EXE: packagedAssetPath(
       'whispercpp',

@@ -9,8 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 
 use crate::audio_capture::{
-    list_input_devices, start_default_streaming_recording_session, AudioChunkReceiver,
-    RecordingSession,
+    list_input_devices, start_default_recording_session, start_default_streaming_recording_session,
+    AudioChunkReceiver, RecordingSession,
 };
 use crate::engine::{AsrEngine, WhisperCppEngine};
 use crate::protocol::{protocol_error, WorkerCommand, WorkerEvent};
@@ -205,7 +205,7 @@ where
         let default_model =
             std::env::var("OPENWHISPER_ASR_MODEL").unwrap_or_else(|_| "medium_en_q8".to_string());
         let default_device =
-            std::env::var("OPENWHISPER_ASR_DEVICE").unwrap_or_else(|_| "cpu".to_string());
+            std::env::var("OPENWHISPER_ASR_DEVICE").unwrap_or_else(|_| "auto".to_string());
         let Some(engine) = self.engine.as_mut() else {
             return WorkerEvent::Error {
                 code: Some("DICTATION_RUNNING".to_string()),
@@ -293,10 +293,23 @@ where
             }
         };
 
-        let mut events = self.stop_streaming();
-        if !self.stream_tail_finalized {
-            events.push(self.transcribe_file(&recording_path));
+        let wav_frames = hound::WavReader::open(&recording_path)
+            .ok()
+            .map(|reader| reader.len() as u32);
+
+        if wav_frames.unwrap_or(0) < 1_600 {
+            let _ = std::fs::remove_file(&recording_path);
+            let _ = self.stop_streaming();
+            return vec![WorkerEvent::AudioError {
+                error: "Recording produced no audio frames".to_string(),
+                code: "AUDIO_RECORDING_FAILED".to_string(),
+            }];
         }
+
+        let mut events = self.stop_streaming();
+        // Always transcribe the full recording on stop; streaming partials are not authoritative.
+        events.retain(|event| !matches!(event, WorkerEvent::TranscriptFinal { .. }));
+        events.push(self.transcribe_file(&recording_path));
         self.stream_tail_finalized = false;
         let _ = std::fs::remove_file(recording_path);
         events
@@ -387,8 +400,20 @@ fn unix_secs() -> u64 {
 
 fn default_recorder_factory() -> Result<Box<dyn ActiveRecording>> {
     let path = default_recording_path();
-    let session = start_default_streaming_recording_session(path)?;
+    // Match Python worker: record the full session, transcribe once on stop (no streaming decode).
+    let session = if streaming_dictation_enabled() {
+        start_default_streaming_recording_session(path)?
+    } else {
+        start_default_recording_session(path)?
+    };
     Ok(Box::new(session))
+}
+
+fn streaming_dictation_enabled() -> bool {
+    match std::env::var("OPENWHISPER_ASR_STREAMING") {
+        Ok(value) => matches!(value.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Err(_) => false,
+    }
 }
 
 fn worker_engine() -> Box<dyn AsrEngine> {
@@ -422,11 +447,17 @@ mod tests {
 
     use crate::engine::{AsrEngine, ModelLoadInfo, Transcription};
 
+    use crate::audio_capture::{write_debug_wav, WORKER_SAMPLE_RATE_HZ};
+
     use super::{
         run_live_worker, run_worker_with_dependencies, unix_timestamp_nanos, ActiveRecording,
     };
 
-    const V1_COMMANDS: &str = include_str!("../../../asr/test_data/protocol/v1_commands.ndjson");
+    const V1_COMMANDS: &str = include_str!("../test_data/protocol/v1_commands.ndjson");
+
+    fn write_fake_recording_wav(path: &Path) -> anyhow::Result<()> {
+        write_debug_wav(path, &[0.0; 4_000], WORKER_SAMPLE_RATE_HZ)
+    }
 
     struct FakeRecording {
         path: PathBuf,
@@ -442,7 +473,7 @@ mod tests {
 
     impl ActiveRecording for FakeRecording {
         fn stop(self: Box<Self>) -> anyhow::Result<PathBuf> {
-            std::fs::write(&self.path, b"fake wav")?;
+            write_fake_recording_wav(&self.path)?;
             Ok(self.path)
         }
 
@@ -451,7 +482,7 @@ mod tests {
 
     impl ActiveRecording for StreamingFakeRecording {
         fn stop(self: Box<Self>) -> anyhow::Result<PathBuf> {
-            std::fs::write(&self.path, b"fake wav")?;
+            write_fake_recording_wav(&self.path)?;
             Ok(self.path)
         }
 
@@ -534,6 +565,7 @@ mod tests {
 
     #[test]
     fn live_worker_flushes_partial_before_stop_so_desktop_can_show_streaming_text() {
+        std::env::set_var("OPENWHISPER_ASR_STREAMING", "1");
         let path = std::env::temp_dir().join(format!(
             "openwhisper-asr-rs-streaming-test-{}.wav",
             unix_timestamp_nanos()
@@ -589,6 +621,7 @@ mod tests {
 
     #[test]
     fn stop_skips_duplicate_final_after_silence_already_finalized_stream_tail() {
+        std::env::set_var("OPENWHISPER_ASR_STREAMING", "1");
         let path = std::env::temp_dir().join(format!(
             "openwhisper-asr-rs-silence-final-test-{}.wav",
             unix_timestamp_nanos()

@@ -11,7 +11,7 @@ const resourcesDir = process.argv[2]
 const required = [
   ['native', 'openwhisper-native.exe'],
   ['native', 'ow-asr-rs.exe'],
-  ['asr', 'config', 'whispercpp-profiles.json'],
+  ['config', 'whispercpp-profiles.json'],
   ['models', 'ggml-medium.en-q8_0.bin'],
   ['models', 'ggml-large-v3-turbo-q8_0.bin'],
   ['whispercpp', 'cpu', 'whisper-cli.exe'],
@@ -26,18 +26,6 @@ const missing = required
 
 if (missing.length > 0) {
   throw new Error(`Packaged ASR runtime assets are missing:\n${missing.join('\n')}`);
-}
-
-const forbidden = [
-  ['asr', 'pyproject.toml'],
-  ['asr', '.venv'],
-];
-const bundledPythonPaths = forbidden
-  .map((parts) => path.join(resourcesDir, ...parts))
-  .filter((asset) => fs.existsSync(asset));
-
-if (bundledPythonPaths.length > 0) {
-  throw new Error(`Packaged ASR runtime still contains Python assets:\n${bundledPythonPaths.join('\n')}`);
 }
 
 console.log(`Packaged Rust ASR runtime smoke check passed: ${resourcesDir}`);

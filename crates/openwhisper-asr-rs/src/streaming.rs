@@ -62,7 +62,7 @@ fn run_streaming_decoder(
     let mut first_speech_at = None;
     let mut silence_started_at = None;
     let mut partials = 0;
-    let mut finals = 0;
+    let finals = 0;
     let mut errors = 0;
 
     log::info!(
@@ -117,24 +117,6 @@ fn run_streaming_decoder(
                     silence_started_at.get_or_insert_with(Instant::now);
                     silence_samples += chunk.len();
                     if silence_samples >= vad.silence_samples(policy.sample_rate_hz) {
-                        match decode_window(
-                            &mut *engine,
-                            &ring,
-                            policy,
-                            &event_tx,
-                            DecodeKind::Final,
-                        ) {
-                            DecodeOutcome::Transcript => {
-                                finals += 1;
-                                log::info!(
-                                    "ASR silence final: session_ms={} silence_ms={}",
-                                    elapsed_ms(session_start),
-                                    silence_started_at.map(elapsed_ms).unwrap_or_default()
-                                );
-                            }
-                            DecodeOutcome::Error => errors += 1,
-                            DecodeOutcome::Skipped => {}
-                        }
                         has_active_speech = false;
                         samples_since_decode = 0;
                         silence_samples = 0;
@@ -372,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn decoder_finalizes_once_after_spoken_audio_turns_silent() {
+    fn decoder_resets_after_spoken_audio_turns_silent_without_premature_final() {
         let (sample_tx, sample_rx) = sync_channel(4);
         let (stop_tx, stop_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -392,7 +374,6 @@ mod tests {
         sample_tx.send(vec![0.0; policy.step_samples()]).unwrap();
         sample_tx.send(vec![0.0; policy.step_samples()]).unwrap();
         let partial = event_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        let final_event = event_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(event_rx.recv_timeout(Duration::from_millis(100)).is_err());
         stop_tx.send(()).unwrap();
         worker.join().unwrap();
@@ -400,10 +381,6 @@ mod tests {
         assert_eq!(
             serde_json::to_value(partial).unwrap()["type"],
             "transcript.partial"
-        );
-        assert_eq!(
-            serde_json::to_value(final_event).unwrap()["type"],
-            "transcript.final"
         );
     }
 

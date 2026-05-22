@@ -37,7 +37,7 @@ Transcribe an audio file through the Rust-controlled whisper.cpp backend:
 cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs -- transcribe .\sample.wav --device cpu --model medium_en_q8
 ```
 
-The transcribe command resolves `asr/config/whispercpp-profiles.json`, validates
+The transcribe command resolves `config/whispercpp-profiles.json`, validates
 the configured model file, runs the selected `whisper-cli`, and prints the final
 text. The stdio worker uses the same backend.
 

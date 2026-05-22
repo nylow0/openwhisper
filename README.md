@@ -7,7 +7,7 @@ Windows-first offline dictation desktop app.
 - **Electron + Svelte + TypeScript**: UI layer
 - **Rust**: Native Windows helper (hotkeys, injection)
 - **Rust ASR worker**: production desktop recording and whisper.cpp worker in `crates/openwhisper-asr-rs/`
-- **ASR profiles and validation tools**: shared whisper.cpp config and test tooling in [`asr/`](asr/)
+- **whisper.cpp profiles**: shared runtime config in [`config/`](config/)
 - **Models**: product-owned runtime model assets in `models/`
 
 ## Quick Start
@@ -52,15 +52,15 @@ bun run --cwd apps/desktop electron:build
 The Windows package bundles the native helper, Rust ASR worker, whisper.cpp
 profiles, model assets, and CPU/GPU whisper.cpp runtime files. Packaging expects
 the validated whisper.cpp build outputs under `asr/.local/whispercpp-src/` and
-the CUDA runtime bundle under `asr/.local/whispercpp/` that the ASR profiles use
-locally. The packaged desktop path selects Rust ASR and does not bundle Python
-or `uv`.
+the CUDA runtime bundle under `asr/.local/whispercpp/`. The packaged desktop app
+uses Rust ASR only.
 
 ## Project Structure
 
 ```text
 apps/desktop/               # Electron app
-asr/                        # whisper.cpp profiles and ASR validation tooling
+config/                     # whisper.cpp profiles
+asr/                        # local whisper.cpp build outputs (gitignored)
 crates/openwhisper-native/  # Rust helper
 crates/openwhisper-asr-rs/  # Rust ASR worker
 models/                     # Git LFS model assets used by the product

@@ -56,8 +56,8 @@
         "to": "native/ow-asr-rs.exe"
       },
       {
-        "from": "../../asr/config/whispercpp-profiles.json",
-        "to": "asr/config/whispercpp-profiles.json"
+        "from": "../../config/whispercpp-profiles.json",
+        "to": "config/whispercpp-profiles.json"
       },
       {
         "from": "../../models",

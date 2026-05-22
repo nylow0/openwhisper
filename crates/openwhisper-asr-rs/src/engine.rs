@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -308,11 +309,7 @@ impl WhisperCppEngine {
             }
         }
 
-        let asr_root = self
-            .config_path
-            .parent()
-            .and_then(Path::parent)
-            .unwrap_or_else(|| Path::new("."));
+        let asr_root = whisper_tooling_root(self.config_path.parent().unwrap_or(Path::new(".")));
         for candidate in local_binary_candidates(binary_hint) {
             let path = asr_root.join(candidate);
             if path.is_file() {
@@ -357,7 +354,7 @@ impl AsrEngine for WhisperCppEngine {
             let model = std::env::var("OPENWHISPER_ASR_MODEL")
                 .unwrap_or_else(|_| "medium_en_q8".to_string());
             let device =
-                std::env::var("OPENWHISPER_ASR_DEVICE").unwrap_or_else(|_| "cpu".to_string());
+                std::env::var("OPENWHISPER_ASR_DEVICE").unwrap_or_else(|_| "auto".to_string());
             self.load_model(&model, &device)?;
         }
         let selection = self
@@ -371,7 +368,8 @@ impl AsrEngine for WhisperCppEngine {
         ));
 
         let start = Instant::now();
-        let completed = run_whisper_cpp(selection, audio_path, &output_base)?;
+        let asr_root = whisper_tooling_root(self.config_path.parent().unwrap_or(Path::new(".")));
+        let completed = run_whisper_cpp(selection, audio_path, &output_base, &asr_root)?;
         let elapsed_ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
 
         if !completed.status.success() {
@@ -423,9 +421,11 @@ fn run_whisper_cpp(
     selection: &WhisperCppSelection,
     audio_path: &Path,
     output_base: &Path,
+    asr_root: &Path,
 ) -> Result<std::process::Output> {
     let mut command = Command::new(&selection.exe_path);
     command
+        .current_dir(asr_root)
         .arg("-m")
         .arg(&selection.model_path)
         .arg("-f")
@@ -433,6 +433,10 @@ fn run_whisper_cpp(
         .args(&selection.args)
         .arg("-of")
         .arg(output_base);
+
+    for (key, value) in whisper_cpp_subprocess_env(selection, asr_root) {
+        command.env(key, value);
+    }
 
     #[cfg(windows)]
     {
@@ -443,6 +447,54 @@ fn run_whisper_cpp(
     command
         .output()
         .with_context(|| format!("failed to run {}", selection.exe_path.display()))
+}
+
+fn whisper_cpp_subprocess_env(
+    selection: &WhisperCppSelection,
+    asr_root: &Path,
+) -> HashMap<String, String> {
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    let mut path_parts = vec![selection
+        .exe_path
+        .parent()
+        .unwrap_or(asr_root)
+        .display()
+        .to_string()];
+
+    if selection.device == "gpu" {
+        if let Ok(prepend) = std::env::var("OPENWHISPER_WHISPERCPP_GPU_PATH") {
+            if !prepend.trim().is_empty() {
+                path_parts.insert(0, prepend);
+            }
+        }
+        for candidate in gpu_path_candidates() {
+            let path = asr_root.join(candidate);
+            if path.is_dir() {
+                path_parts.push(path.display().to_string());
+            }
+        }
+    }
+
+    if let Ok(existing) = std::env::var("PATH") {
+        path_parts.push(existing);
+    }
+    env.insert("PATH".to_string(), path_parts.join(separator));
+
+    if selection.device == "cpu" {
+        env.insert("OPENBLAS_NUM_THREADS".to_string(), "1".to_string());
+    }
+
+    env
+}
+
+fn gpu_path_candidates() -> &'static [&'static str] {
+    &[
+        ".local/tools/cuda-13.2/toolkit/bin",
+        ".local/tools/cuda-13.2/toolkit/bin/x64",
+        ".local/whispercpp-src/build-cuda-sm120-local/bin",
+        ".local/whispercpp/cuda-bin/Release",
+    ]
 }
 
 pub fn parse_whisper_cpp_payload(
@@ -507,7 +559,6 @@ fn default_config_path() -> PathBuf {
 
     find_workspace_root()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("asr")
         .join("config")
         .join("whispercpp-profiles.json")
 }
@@ -515,18 +566,20 @@ fn default_config_path() -> PathBuf {
 fn find_workspace_root() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
     loop {
-        if dir
-            .join("asr")
-            .join("config")
-            .join("whispercpp-profiles.json")
-            .is_file()
-        {
+        if dir.join("config").join("whispercpp-profiles.json").is_file() {
             return Some(dir);
         }
         if !dir.pop() {
             return None;
         }
     }
+}
+
+fn whisper_tooling_root(workspace_or_config_parent: &Path) -> PathBuf {
+    if let Some(workspace) = find_workspace_root() {
+        return workspace.join("asr");
+    }
+    workspace_or_config_parent.join("asr")
 }
 
 fn unix_timestamp_nanos() -> u128 {

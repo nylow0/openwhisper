@@ -99,8 +99,8 @@ pub fn protocol_error(message: impl Into<String>) -> WorkerEvent {
 mod tests {
     use super::{WorkerCommand, WorkerEvent};
 
-    const V1_COMMANDS: &str = include_str!("../../../asr/test_data/protocol/v1_commands.ndjson");
-    const V1_EVENTS: &str = include_str!("../../../asr/test_data/protocol/v1_events.ndjson");
+    const V1_COMMANDS: &str = include_str!("../test_data/protocol/v1_commands.ndjson");
+    const V1_EVENTS: &str = include_str!("../test_data/protocol/v1_events.ndjson");
 
     #[test]
     fn parses_existing_desktop_commands() {

@@ -4,7 +4,7 @@
   "benchmark_audio_seconds": 136.52,
   "model_dir": {
     "env": "OPENWHISPER_MODEL_DIR",
-    "default_relative_to_config": "../../models"
+    "default_relative_to_config": "../models"
   },
   "models": {
     "medium_en_q8": {

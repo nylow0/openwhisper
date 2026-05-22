@@ -47,6 +47,17 @@ Measure the Rust-controlled backend against a WAV file:
 cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs -- bench .\sample.wav --device cpu --model medium_en_q8
 ```
 
+Compare language settings (mirrors desktop `OPENWHISPER_ASR_*` env vars):
+
+```powershell
+cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs -- bench .\sample.wav --model large_v3_turbo_q8 --device gpu --languages en --auto-detect-language
+cargo run --manifest-path crates/openwhisper-asr-rs/Cargo.toml --bin ow-asr-rs -- bench .\sample.wav --model large_v3_turbo_q8 --device gpu --languages en,de,fr
+```
+
+The worker uses a single whisper.cpp pass: `-l auto` when auto-detect is enabled
+or when multiple spoken languages are configured, and `-l <lang>` when exactly
+one language is selected without auto-detect.
+
 The benchmark prints JSON with WAV duration, backend setup time, decode wall
 time, realtime factor, selected profile memory, and process CPU/working-set
 samples when the platform exposes them. Live streaming logs also report the

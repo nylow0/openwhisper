@@ -299,11 +299,20 @@ dependencies = [
  "anyhow",
  "env_logger",
  "log",
+ "openwhisper-paths",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "windows",
+]
+
+[[package]]
+name = "openwhisper-paths"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

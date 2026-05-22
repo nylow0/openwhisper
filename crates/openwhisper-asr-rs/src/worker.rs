@@ -410,10 +410,9 @@ fn default_recorder_factory() -> Result<Box<dyn ActiveRecording>> {
 }
 
 fn streaming_dictation_enabled() -> bool {
-    match std::env::var("OPENWHISPER_ASR_STREAMING") {
-        Ok(value) => matches!(value.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on"),
-        Err(_) => false,
-    }
+    std::env::var("OPENWHISPER_ASR_STREAMING")
+        .map(|value| crate::engine::env_value_is_truthy(&value))
+        .unwrap_or(false)
 }
 
 fn worker_engine() -> Box<dyn AsrEngine> {

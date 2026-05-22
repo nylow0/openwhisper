@@ -11,6 +11,11 @@ import {
   setupIpcHandlers,
 } from './ipc.js';
 import { createAppIcon } from './tray-icon.js';
+import {
+  clearPathsManifestCache,
+  debugNativeBinaryCandidates,
+  windowsMsvcTarget,
+} from './openwhisper-paths.js';
 import { loadJson, saveJson } from './store.js';
 import { SUPPORTED_ASR_LANGUAGES, type AppSettings, type AsrLanguageCode } from '../shared/types.js';
 
@@ -247,6 +252,7 @@ function findProjectRoot(): string {
   const starts = [
     process.env.OPENWHISPER_PROJECT_ROOT,
     process.cwd(),
+    app.isPackaged ? process.resourcesPath : undefined,
     path.dirname(app.getPath('exe')),
     __dirname,
   ].filter((candidate): candidate is string => Boolean(candidate));
@@ -278,7 +284,88 @@ function packagedAssetPath(...parts: string[]): string {
   return path.join(process.resourcesPath, ...parts);
 }
 
-function rustEnv(): NodeJS.ProcessEnv {
+type RustHelperLaunch =
+  | {
+      kind: 'binary';
+      workspaceRoot: string;
+      binaryPath: string;
+      cwd: string;
+      usePackagedAssets: boolean;
+    }
+  | {
+      kind: 'cargo';
+      workspaceRoot: string;
+      cwd: string;
+      usePackagedAssets: false;
+    };
+
+let cachedRustHelperLaunch: RustHelperLaunch | null = null;
+
+function whisperCppAssetEnv(assetsRoot: string): NodeJS.ProcessEnv {
+  return {
+    OPENWHISPER_WHISPERCPP_CONFIG: path.join(assetsRoot, 'config', 'whispercpp-profiles.json'),
+    OPENWHISPER_MODEL_DIR: path.join(assetsRoot, 'models'),
+    OPENWHISPER_WHISPERCPP_CPU_EXE: path.join(assetsRoot, 'whispercpp', 'cpu', 'whisper-cli.exe'),
+    OPENWHISPER_WHISPERCPP_GPU_EXE: path.join(assetsRoot, 'whispercpp', 'gpu', 'whisper-cli.exe'),
+  };
+}
+
+function resolveRustHelperLaunch(): RustHelperLaunch {
+  const workspaceRoot = findProjectRoot();
+  const packagedBinaryPath = packagedAssetPath('native', 'openwhisper-native.exe');
+  const packagedConfigPath = packagedAssetPath('config', 'whispercpp-profiles.json');
+
+  if (app.isPackaged) {
+    if (!fs.existsSync(packagedBinaryPath)) {
+      throw new Error(`Bundled Rust helper is missing: ${packagedBinaryPath}`);
+    }
+    if (!fs.existsSync(packagedConfigPath)) {
+      throw new Error(`Bundled whisper.cpp config is missing: ${packagedConfigPath}`);
+    }
+    return {
+      kind: 'binary',
+      workspaceRoot,
+      binaryPath: packagedBinaryPath,
+      cwd: process.resourcesPath,
+      usePackagedAssets: true,
+    };
+  }
+
+  const devBinaryPath = debugNativeBinaryCandidates(
+    workspaceRoot,
+    'openwhisper-native',
+    'openwhisper-native'
+  ).find((candidate) => fs.existsSync(candidate));
+
+  if (devBinaryPath) {
+    return {
+      kind: 'binary',
+      workspaceRoot,
+      binaryPath: devBinaryPath,
+      cwd: workspaceRoot,
+      usePackagedAssets: false,
+    };
+  }
+
+  console.warn(
+    '[Main] Native helper binary not found; falling back to `cargo run` (slower startup).'
+  );
+  return {
+    kind: 'cargo',
+    workspaceRoot,
+    cwd: workspaceRoot,
+    usePackagedAssets: false,
+  };
+}
+
+function getRustHelperLaunch(): RustHelperLaunch {
+  if (!cachedRustHelperLaunch) {
+    cachedRustHelperLaunch = resolveRustHelperLaunch();
+  }
+  return cachedRustHelperLaunch;
+}
+
+function rustEnv(launch: RustHelperLaunch): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     OPENWHISPER_ASR_MODEL: settings.model,
@@ -287,22 +374,16 @@ function rustEnv(): NodeJS.ProcessEnv {
     OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE: settings.autoDetectLanguage ? '1' : '0',
   };
 
-  if (!app.isPackaged) return env;
+  if (launch.usePackagedAssets) {
+    return { ...env, ...whisperCppAssetEnv(process.resourcesPath) };
+  }
 
+  const workspaceRoot = launch.workspaceRoot;
   return {
     ...env,
-    OPENWHISPER_WHISPERCPP_CONFIG: packagedAssetPath('config', 'whispercpp-profiles.json'),
-    OPENWHISPER_MODEL_DIR: packagedAssetPath('models'),
-    OPENWHISPER_WHISPERCPP_CPU_EXE: packagedAssetPath(
-      'whispercpp',
-      'cpu',
-      'whisper-cli.exe'
-    ),
-    OPENWHISPER_WHISPERCPP_GPU_EXE: packagedAssetPath(
-      'whispercpp',
-      'gpu',
-      'whisper-cli.exe'
-    ),
+    OPENWHISPER_PROJECT_ROOT: workspaceRoot,
+    OPENWHISPER_WHISPERCPP_CONFIG: path.join(workspaceRoot, 'config', 'whispercpp-profiles.json'),
+    OPENWHISPER_MODEL_DIR: path.join(workspaceRoot, 'models'),
   };
 }
 
@@ -310,29 +391,8 @@ function startRustHelper(): Promise<string> {
   return new Promise((resolve, reject) => {
     const electronPid = process.pid;
     const pipeName = `\\\\.\\pipe\\OpenWhisper-${electronPid}`;
-    const projectRoot = app.isPackaged ? process.resourcesPath : findProjectRoot();
-    const binaryPaths = [
-      path.join(
-        projectRoot,
-        'crates',
-        'openwhisper-native',
-        'target',
-        'x86_64-pc-windows-msvc',
-        'debug',
-        'openwhisper-native.exe'
-      ),
-      path.join(
-        projectRoot,
-        'crates',
-        'openwhisper-native',
-        'target',
-        'debug',
-        'openwhisper-native.exe'
-      ),
-    ];
-    const rustCwd = path.join(projectRoot, 'crates', 'openwhisper-native');
-    const binaryPath = binaryPaths.find((candidate) => fs.existsSync(candidate));
-    const packagedBinaryPath = packagedAssetPath('native', 'openwhisper-native.exe');
+    const launch = getRustHelperLaunch();
+    const rustCwd = path.join(launch.workspaceRoot, 'crates', 'openwhisper-native');
     let settled = false;
 
     const settleReady = (): void => {
@@ -341,32 +401,35 @@ function startRustHelper(): Promise<string> {
       resolve(pipeName);
     };
 
-    if (app.isPackaged && !fs.existsSync(packagedBinaryPath)) {
-      reject(new Error(`Bundled Rust helper is missing: ${packagedBinaryPath}`));
-      return;
+    const rustEnvVars = rustEnv(launch);
+    const rustSpawnOptions = {
+      stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+      env: rustEnvVars,
+    };
+
+    if (launch.kind === 'cargo') {
+      console.log('[Main] Starting native helper via cargo run');
+      rustProcess = spawn(
+        'cargo',
+        [
+          'run',
+          '--target',
+          windowsMsvcTarget(launch.workspaceRoot),
+          '--',
+          '--pipe-pid',
+          String(electronPid),
+        ],
+        { ...rustSpawnOptions, cwd: rustCwd }
+      );
+    } else {
+      console.log(`[Main] Starting native helper: ${launch.binaryPath}`);
+      rustProcess = spawn(launch.binaryPath, ['--pipe-pid', String(electronPid)], {
+        ...rustSpawnOptions,
+        cwd: launch.cwd,
+      });
     }
 
-    rustProcess = app.isPackaged
-      ? spawn(packagedBinaryPath, ['--pipe-pid', String(electronPid)], {
-          cwd: projectRoot,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: rustEnv(),
-        })
-      : binaryPath
-      ? spawn(binaryPath, ['--pipe-pid', String(electronPid)], {
-          cwd: projectRoot,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: rustEnv(),
-        })
-      : spawn(
-          'cargo',
-          ['run', '--target', 'x86_64-pc-windows-msvc', '--', '--pipe-pid', String(electronPid)],
-          {
-            cwd: rustCwd,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            env: rustEnv(),
-          }
-        );
+    const rustChild = rustProcess;
 
     const handleOutput = (prefix: string, data: Buffer): void => {
       const text = data.toString('utf-8').trim();
@@ -374,10 +437,10 @@ function startRustHelper(): Promise<string> {
       if (text.includes('Starting IPC server')) settleReady();
     };
 
-    rustProcess.stdout?.on('data', (data: Buffer) => handleOutput('[Rust]', data));
-    rustProcess.stderr?.on('data', (data: Buffer) => handleOutput('[Rust stderr]', data));
+    rustChild.stdout?.on('data', (data: Buffer) => handleOutput('[Rust]', data));
+    rustChild.stderr?.on('data', (data: Buffer) => handleOutput('[Rust stderr]', data));
 
-    rustProcess.on('error', (err) => {
+    rustChild.on('error', (err) => {
       if (settled) {
         console.error('[Rust] Process error:', err);
         return;
@@ -386,7 +449,7 @@ function startRustHelper(): Promise<string> {
       reject(err);
     });
 
-    rustProcess.on('exit', (code) => {
+    rustChild.on('exit', (code) => {
       console.log(`[Rust] Process exited with code ${code}`);
     });
 
@@ -399,6 +462,8 @@ async function restartEngine(): Promise<{ ok: boolean; error?: string }> {
   disconnectRust();
   rustProcess?.kill();
   rustProcess = null;
+  cachedRustHelperLaunch = null;
+  clearPathsManifestCache();
   await new Promise((resolve) => setTimeout(resolve, 500));
   try {
     const pipeName = await startRustHelper();

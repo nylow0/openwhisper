@@ -52,14 +52,7 @@ fn find_rust_worker_binary() -> Result<PathBuf> {
     }
 
     let worker_dir = find_rust_worker_dir()?;
-    for candidate in [
-        worker_dir.join("target").join("debug").join(name),
-        worker_dir
-            .join("target")
-            .join("x86_64-pc-windows-msvc")
-            .join("debug")
-            .join(name),
-    ] {
+    for candidate in openwhisper_paths::debug_executable_candidates(&worker_dir, "openwhisper-asr-rs") {
         if candidate.exists() {
             return Ok(candidate);
         }

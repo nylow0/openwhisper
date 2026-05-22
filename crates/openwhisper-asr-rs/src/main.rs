@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use anyhow::Context;
 use audio_capture::record_default_input_to_wav;
-use engine::{AsrEngine, WhisperCppEngine};
+use engine::{apply_asr_language_env, AsrEngine, WhisperCppEngine};
 use performance::{audio_duration_ms, BenchReport, ProcessSample};
 
 fn main() -> anyhow::Result<()> {
@@ -27,12 +27,16 @@ fn main() -> anyhow::Result<()> {
             path,
             model,
             device,
-        } => transcribe_file(&path, &model, &device),
+            languages,
+            auto_detect_language,
+        } => transcribe_file(&path, &model, &device, &languages, auto_detect_language),
         Command::Bench {
             path,
             model,
             device,
-        } => bench_file(&path, &model, &device),
+            languages,
+            auto_detect_language,
+        } => bench_file(&path, &model, &device, &languages, auto_detect_language),
     }
 }
 
@@ -46,11 +50,15 @@ enum Command {
         path: PathBuf,
         model: String,
         device: String,
+        languages: String,
+        auto_detect_language: bool,
     },
     Bench {
         path: PathBuf,
         model: String,
         device: String,
+        languages: String,
+        auto_detect_language: bool,
     },
 }
 
@@ -97,31 +105,41 @@ fn parse_record_args(args: &[String]) -> anyhow::Result<Command> {
 }
 
 fn parse_transcribe_args(args: &[String]) -> anyhow::Result<Command> {
-    parse_audio_engine_args(args, "transcribe").map(|(path, model, device)| Command::Transcribe {
+    let (path, model, device, languages, auto_detect_language) =
+        parse_audio_engine_args(args, "transcribe")?;
+    Ok(Command::Transcribe {
         path,
         model,
         device,
+        languages,
+        auto_detect_language,
     })
 }
 
 fn parse_bench_args(args: &[String]) -> anyhow::Result<Command> {
-    parse_audio_engine_args(args, "bench").map(|(path, model, device)| Command::Bench {
+    let (path, model, device, languages, auto_detect_language) =
+        parse_audio_engine_args(args, "bench")?;
+    Ok(Command::Bench {
         path,
         model,
         device,
+        languages,
+        auto_detect_language,
     })
 }
 
 fn parse_audio_engine_args(
     args: &[String],
     command_name: &str,
-) -> anyhow::Result<(PathBuf, String, String)> {
+) -> anyhow::Result<(PathBuf, String, String, String, bool)> {
     let path = args
         .get(1)
         .map(PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("{command_name} requires an input audio path"))?;
     let mut model = "medium_en_q8".to_string();
     let mut device = "auto".to_string();
+    let mut languages = "en".to_string();
+    let mut auto_detect_language = false;
     let mut index = 2;
 
     while index < args.len() {
@@ -140,14 +158,32 @@ fn parse_audio_engine_args(
                     .to_string();
                 index += 2;
             }
+            "--languages" => {
+                languages = args
+                    .get(index + 1)
+                    .ok_or_else(|| anyhow::anyhow!("--languages requires a value"))?
+                    .to_string();
+                index += 2;
+            }
+            "--auto-detect-language" => {
+                auto_detect_language = true;
+                index += 1;
+            }
             other => anyhow::bail!("unsupported {command_name} argument: {other}"),
         }
     }
 
-    Ok((path, model, device))
+    Ok((path, model, device, languages, auto_detect_language))
 }
 
-fn transcribe_file(path: &Path, model: &str, device: &str) -> anyhow::Result<()> {
+fn transcribe_file(
+    path: &Path,
+    model: &str,
+    device: &str,
+    languages: &str,
+    auto_detect_language: bool,
+) -> anyhow::Result<()> {
+    apply_asr_language_env(languages, auto_detect_language);
     let mut engine = WhisperCppEngine::default();
     engine.load_model(model, device)?;
     let result = engine.transcribe_file(path)?;
@@ -155,7 +191,15 @@ fn transcribe_file(path: &Path, model: &str, device: &str) -> anyhow::Result<()>
     Ok(())
 }
 
-fn bench_file(path: &Path, model: &str, device: &str) -> anyhow::Result<()> {
+fn bench_file(
+    path: &Path,
+    model: &str,
+    device: &str,
+    languages: &str,
+    auto_detect_language: bool,
+) -> anyhow::Result<()> {
+    apply_asr_language_env(languages, auto_detect_language);
+
     let process_before = ProcessSample::capture();
     let mut engine = WhisperCppEngine::default();
     let setup_start = Instant::now();
@@ -236,10 +280,14 @@ mod tests {
                 path,
                 model,
                 device,
+                languages,
+                auto_detect_language,
             } => {
                 assert_eq!(path, PathBuf::from("sample.wav"));
                 assert_eq!(model, "turbo");
                 assert_eq!(device, "cpu");
+                assert_eq!(languages, "en");
+                assert!(!auto_detect_language);
             }
             _ => panic!("expected transcribe command"),
         }
@@ -262,10 +310,14 @@ mod tests {
                 path,
                 model,
                 device,
+                languages,
+                auto_detect_language,
             } => {
                 assert_eq!(path, PathBuf::from("sample.wav"));
                 assert_eq!(model, "medium_en_q8");
                 assert_eq!(device, "cpu");
+                assert_eq!(languages, "en");
+                assert!(!auto_detect_language);
             }
             _ => panic!("expected bench command"),
         }

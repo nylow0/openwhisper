@@ -1,0 +1,11 @@
+{
+  "windowsMsvcTarget": "x86_64-pc-windows-msvc",
+  "debugTargetSubdirs": [
+    ["target", "x86_64-pc-windows-msvc", "debug"],
+    ["target", "debug"]
+  ],
+  "executables": {
+    "openwhisper-native": "openwhisper-native.exe",
+    "openwhisper-asr-rs": "ow-asr-rs.exe"
+  }
+}

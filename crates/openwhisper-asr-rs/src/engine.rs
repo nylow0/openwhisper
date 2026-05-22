@@ -100,6 +100,13 @@ pub fn mock_words(text: &str) -> Vec<WordResult> {
 pub struct WhisperCppEngine {
     config_path: PathBuf,
     selection: Option<WhisperCppSelection>,
+    language_config: AsrLanguageConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AsrLanguageConfig {
+    spoken_languages: Vec<String>,
+    auto_detect_language: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +118,109 @@ struct WhisperCppSelection {
     memory_mb: f64,
     vad: VadConfig,
     window: WindowPolicy,
+}
+
+pub(crate) fn env_value_is_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+pub fn apply_asr_language_env(languages: &str, auto_detect_language: bool) {
+    std::env::set_var("OPENWHISPER_ASR_LANGUAGES", languages);
+    if auto_detect_language {
+        std::env::set_var("OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE", "1");
+    } else {
+        std::env::remove_var("OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE");
+    }
+}
+
+fn read_asr_language_config() -> AsrLanguageConfig {
+    let spoken_raw =
+        std::env::var("OPENWHISPER_ASR_LANGUAGES").unwrap_or_else(|_| "en".to_string());
+    let mut spoken_languages = Vec::new();
+    for item in spoken_raw.split(',') {
+        let language = item.trim().to_lowercase();
+        if language.is_empty() || spoken_languages.iter().any(|l| l == &language) {
+            continue;
+        }
+        spoken_languages.push(language);
+    }
+    if spoken_languages.is_empty() {
+        spoken_languages.push("en".to_string());
+    }
+
+    let auto_detect_language = std::env::var("OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE")
+        .map(|value| env_value_is_truthy(&value))
+        .unwrap_or(false);
+
+    AsrLanguageConfig {
+        spoken_languages,
+        auto_detect_language,
+    }
+}
+
+fn resolve_whisper_language_flag(config: &AsrLanguageConfig) -> &str {
+    if config.auto_detect_language || config.spoken_languages.len() > 1 {
+        "auto"
+    } else {
+        &config.spoken_languages[0]
+    }
+}
+
+fn replace_whisper_language_arg(args: &[String], language: &str) -> Vec<String> {
+    let mut cleaned = Vec::with_capacity(args.len() + 2);
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == "-l" || arg == "--language" {
+            skip_next = true;
+            continue;
+        }
+        cleaned.push(arg.clone());
+    }
+    cleaned.push("-l".to_string());
+    cleaned.push(language.to_string());
+    cleaned
+}
+
+fn validate_transcription_language(
+    detected: &Option<String>,
+    config: &AsrLanguageConfig,
+) -> Result<()> {
+    let Some(language) = detected else {
+        return Ok(());
+    };
+    if config.auto_detect_language {
+        return Ok(());
+    }
+    if config.spoken_languages.len() == 1 && language != &config.spoken_languages[0] {
+        anyhow::bail!(
+            "whisper.cpp returned language {language} but configured spoken language is {}",
+            config.spoken_languages[0]
+        );
+    }
+    if config.spoken_languages.len() > 1
+        && !config
+            .spoken_languages
+            .iter()
+            .any(|spoken| spoken == language)
+    {
+        anyhow::bail!(
+            "whisper.cpp returned language {language} outside configured spoken languages: {:?}",
+            config.spoken_languages
+        );
+    }
+    Ok(())
+}
+
+fn canonicalize_existing_path(path: &Path) -> Result<PathBuf> {
+    path.canonicalize()
+        .with_context(|| format!("failed to resolve path {}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +304,7 @@ impl Default for WhisperCppEngine {
         Self {
             config_path: default_config_path(),
             selection: None,
+            language_config: read_asr_language_config(),
         }
     }
 }
@@ -204,6 +315,7 @@ impl WhisperCppEngine {
         Self {
             config_path,
             selection: None,
+            language_config: read_asr_language_config(),
         }
     }
 
@@ -274,19 +386,26 @@ impl WhisperCppEngine {
             );
         }
 
-        Ok(model_path)
+        canonicalize_existing_path(&model_path)
     }
 
     fn model_dir(&self, config: &ModelDirConfig) -> PathBuf {
-        if let Ok(value) = std::env::var(&config.env) {
+        let dir = if let Ok(value) = std::env::var(&config.env) {
             if !value.trim().is_empty() {
-                return PathBuf::from(value);
+                PathBuf::from(value)
+            } else {
+                self.config_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(&config.default_relative_to_config)
             }
-        }
-        self.config_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(&config.default_relative_to_config)
+        } else {
+            self.config_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(&config.default_relative_to_config)
+        };
+        dir.canonicalize().unwrap_or(dir)
     }
 
     fn resolve_exe_path(&self, binary_hint: &str) -> Result<PathBuf> {
@@ -300,7 +419,7 @@ impl WhisperCppEngine {
             if !value.trim().is_empty() {
                 let path = PathBuf::from(value);
                 if path.is_file() {
-                    return Ok(path);
+                    return canonicalize_existing_path(&path);
                 }
                 anyhow::bail!(
                     "{env_name} points to a missing whisper.cpp binary: {}",
@@ -313,7 +432,7 @@ impl WhisperCppEngine {
         for candidate in local_binary_candidates(binary_hint) {
             let path = asr_root.join(candidate);
             if path.is_file() {
-                return Ok(path);
+                return canonicalize_existing_path(&path);
             }
         }
 
@@ -328,12 +447,16 @@ impl AsrEngine for WhisperCppEngine {
         let model_path = self.resolve_model_path(&config, &profile.model)?;
         let exe_path = self.resolve_exe_path(&profile.binary_hint)?;
         let memory_mb = profile.benchmark.peak_ram_mb.unwrap_or(0.0);
+        let language_config = read_asr_language_config();
+        let language_flag = resolve_whisper_language_flag(&language_config);
+        let whisper_args = replace_whisper_language_arg(&profile.args, language_flag);
+        self.language_config = language_config;
 
         self.selection = Some(WhisperCppSelection {
             device: profile.device.clone(),
             exe_path,
             model_path,
-            args: profile.args.clone(),
+            args: whisper_args,
             memory_mb,
             vad: profile.vad.into_vad_config(),
             window: profile.streaming.into_window_policy(),
@@ -367,6 +490,12 @@ impl AsrEngine for WhisperCppEngine {
             unix_timestamp_nanos()
         ));
 
+        log::debug!(
+            "whisper.cpp decode: spoken_languages={:?} auto_detect={}",
+            self.language_config.spoken_languages,
+            self.language_config.auto_detect_language
+        );
+
         let start = Instant::now();
         let asr_root = whisper_tooling_root(self.config_path.parent().unwrap_or(Path::new(".")));
         let completed = run_whisper_cpp(selection, audio_path, &output_base, &asr_root)?;
@@ -397,7 +526,9 @@ impl AsrEngine for WhisperCppEngine {
         })?;
         let _ = std::fs::remove_file(&json_path);
 
-        parse_whisper_cpp_payload(&payload, elapsed_ms)
+        let transcription = parse_whisper_cpp_payload(&payload, elapsed_ms)?;
+        validate_transcription_language(&transcription.language, &self.language_config)?;
+        Ok(transcription)
     }
 
     fn vad_config(&self) -> VadConfig {
@@ -601,8 +732,52 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        parse_whisper_cpp_payload, AsrEngine, MockEngine, ProfileConfig, WhisperCppEngine,
+        parse_whisper_cpp_payload, read_asr_language_config, replace_whisper_language_arg,
+        resolve_whisper_language_flag, AsrEngine, AsrLanguageConfig, MockEngine, ProfileConfig,
+        WhisperCppEngine,
     };
+
+    #[test]
+    fn resolve_language_flag_uses_auto_for_auto_detect_or_multiple_languages() {
+        let auto = AsrLanguageConfig {
+            spoken_languages: vec!["en".to_string()],
+            auto_detect_language: true,
+        };
+        assert_eq!(resolve_whisper_language_flag(&auto), "auto");
+
+        let multi = AsrLanguageConfig {
+            spoken_languages: vec!["en".to_string(), "de".to_string()],
+            auto_detect_language: false,
+        };
+        assert_eq!(resolve_whisper_language_flag(&multi), "auto");
+    }
+
+    #[test]
+    fn resolve_language_flag_uses_single_spoken_language_without_auto_detect() {
+        let single = AsrLanguageConfig {
+            spoken_languages: vec!["de".to_string()],
+            auto_detect_language: false,
+        };
+        assert_eq!(resolve_whisper_language_flag(&single), "de");
+    }
+
+    #[test]
+    fn replace_whisper_language_arg_overrides_profile_language() {
+        let args = replace_whisper_language_arg(
+            &["-l".to_string(), "auto".to_string(), "-nt".to_string()],
+            "en",
+        );
+        assert_eq!(args, vec!["-nt".to_string(), "-l".to_string(), "en".to_string()]);
+    }
+
+    #[test]
+    fn read_asr_language_config_parses_env() {
+        std::env::set_var("OPENWHISPER_ASR_LANGUAGES", "de,en,de");
+        std::env::set_var("OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE", "1");
+        let config = read_asr_language_config();
+        assert_eq!(config.spoken_languages, vec!["de".to_string(), "en".to_string()]);
+        assert!(config.auto_detect_language);
+    }
 
     #[test]
     fn mock_file_transcription_includes_source_name() {

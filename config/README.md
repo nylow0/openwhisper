@@ -30,3 +30,9 @@ Rust streaming dictation reads each profile's `vad.rms_threshold` and
 Rust live decode windows. `OPENWHISPER_ASR_STREAM_STEP_MS`,
 `OPENWHISPER_ASR_STREAM_LENGTH_MS`, and `OPENWHISPER_ASR_STREAM_KEEP_MS`
 override them while measuring latency and decoder pressure.
+
+## Path manifest
+
+`openwhisper-paths.json` is the shared source of truth for debug `target/`
+layout and executable names. The `openwhisper-paths` Rust crate and the desktop
+main process both read it so native/ASR binary discovery stays aligned.

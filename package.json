@@ -14,7 +14,8 @@
     "cargo:build": "cargo build --manifest-path crates/openwhisper-native/Cargo.toml --target x86_64-pc-windows-msvc",
     "cargo:dev": "cargo run --manifest-path crates/openwhisper-native/Cargo.toml --target x86_64-pc-windows-msvc",
     "asr:rust:test": "cargo test --manifest-path crates/openwhisper-asr-rs/Cargo.toml --target x86_64-pc-windows-msvc",
-    "setup": "bun install && cargo fetch"
+    "setup": "bun install && bun run install:electron && cargo fetch",
+    "install:electron": "node scripts/install-electron.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.0.0"

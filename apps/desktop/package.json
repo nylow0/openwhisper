@@ -12,7 +12,7 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "test": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview",
-    "electron:dev": "tsc && bun run prepare:preload && vite build && electron .",
+    "electron:dev": "node ../../scripts/install-electron.mjs && tsc && bun run prepare:preload && vite build && electron .",
     "native:release": "cargo build --manifest-path ../../crates/openwhisper-native/Cargo.toml --release --target x86_64-pc-windows-msvc && cargo build --manifest-path ../../crates/openwhisper-asr-rs/Cargo.toml --release --target x86_64-pc-windows-msvc",
     "package:smoke": "bun scripts/smoke-package.mjs",
     "electron:build": "bun run native:release && tsc && bun run prepare:preload && vite build && electron-builder && bun run package:smoke && bun run update:start-menu",

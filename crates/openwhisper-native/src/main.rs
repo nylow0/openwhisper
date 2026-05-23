@@ -77,6 +77,7 @@ async fn main() -> Result<()> {
 
     // Main bridge loop
     let state_clone = state.clone();
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
     let bridge_handle = tokio::spawn(async move {
         // A genuine push-to-talk hold easily outlasts this debounce window;
         // brief stray bursts (e.g. a laptop Fn+F10 trackpad toggle that the
@@ -244,27 +245,41 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+                _ = shutdown_rx.recv() => {
+                    log::info!("Shutdown requested - stopping ASR worker");
+                    asr_worker.shutdown().await;
+                    break;
+                }
                 else => {
                     log::info!("Bridge channels closed, shutting down");
+                    asr_worker.shutdown().await;
                     break;
                 }
             }
         }
     });
 
-    // Wait for Ctrl+C
-    match signal::ctrl_c().await {
-        Ok(()) => {
-            log::info!("Received Ctrl+C, shutting down...");
+    tokio::select! {
+        ctrl = signal::ctrl_c() => {
+            match ctrl {
+                Ok(()) => log::info!("Received Ctrl+C, shutting down..."),
+                Err(e) => log::error!("Failed to listen for Ctrl+C: {}", e),
+            }
         }
-        Err(e) => {
-            log::error!("Failed to listen for Ctrl+C: {}", e);
+        result = ipc_handle => {
+            match result {
+                Ok(()) => log::info!("IPC server stopped, shutting down native helper..."),
+                Err(e) => log::error!("IPC server task failed: {}", e),
+            }
         }
     }
 
-    // Abort background tasks to trigger shutdown
-    bridge_handle.abort();
-    ipc_handle.abort();
+    let _ = shutdown_tx.send(()).await;
+    match tokio::time::timeout(std::time::Duration::from_secs(3), bridge_handle).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => log::error!("Bridge task failed during shutdown: {}", e),
+        Err(_) => log::warn!("Timed out waiting for bridge shutdown"),
+    }
 
     log::info!("OpenWhisper Native Helper shutting down...");
     Ok(())

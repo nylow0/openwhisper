@@ -40,7 +40,7 @@ pub fn prepare_decode_audio(
         samples.len() as f32 / sample_rate_hz as f32,
         trimmed.len() as f32 / sample_rate_hz as f32
     );
-    Ok((path, Some(path.clone()), speech))
+    Ok((path.clone(), Some(path), speech))
 }
 
 fn load_wav_mono_f32(path: &Path) -> Result<(Vec<f32>, u32)> {

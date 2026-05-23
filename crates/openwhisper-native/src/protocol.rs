@@ -23,6 +23,9 @@ pub enum ToWorker {
 
     #[serde(rename = "dictation.stop")]
     DictationStop,
+
+    #[serde(rename = "shutdown")]
+    Shutdown,
 }
 
 // Messages ASR worker -> native helper.

@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
-use tokio::time::interval;
+use tokio::time::{interval, timeout};
 
 use crate::protocol::{FromWorker, ToWorker};
 
@@ -62,7 +62,7 @@ fn find_rust_worker_binary() -> Result<PathBuf> {
 }
 
 pub struct AsrWorker {
-    _child: Child,
+    child: Child,
     tx: mpsc::Sender<ToWorker>,
     rx: mpsc::Receiver<FromWorker>,
 }
@@ -77,7 +77,8 @@ impl AsrWorker {
             .envs(std::env::vars())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true);
 
         let mut child = command
             .spawn()
@@ -191,7 +192,7 @@ impl AsrWorker {
         });
 
         Ok(Self {
-            _child: child,
+            child,
             tx: to_worker_tx,
             rx: from_worker_rx,
         })
@@ -208,5 +209,22 @@ impl AsrWorker {
 
     pub async fn recv(&mut self) -> Option<FromWorker> {
         self.rx.recv().await
+    }
+
+    pub async fn shutdown(&mut self) {
+        if let Err(error) = self.tx.send(ToWorker::Shutdown).await {
+            log::warn!("Failed to send ASR worker shutdown: {error}");
+        }
+
+        match timeout(Duration::from_secs(2), self.child.wait()).await {
+            Ok(Ok(status)) => log::info!("ASR worker exited with status {status}"),
+            Ok(Err(error)) => log::warn!("Failed to wait for ASR worker exit: {error}"),
+            Err(_) => {
+                log::warn!("Timed out waiting for ASR worker shutdown; killing process");
+                if let Err(error) = self.child.kill().await {
+                    log::warn!("Failed to kill ASR worker: {error}");
+                }
+            }
+        }
     }
 }

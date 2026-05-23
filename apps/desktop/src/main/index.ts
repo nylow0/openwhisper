@@ -47,6 +47,7 @@ let overlayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let rustProcess: ChildProcess | null = null;
 let isQuitting = false;
+let quitShutdownComplete = false;
 let settings: AppSettings = DEFAULT_SETTINGS;
 
 function isAsrModel(model: unknown): model is AppSettings['model'] {
@@ -311,7 +312,6 @@ function whisperCppAssetEnv(assetsRoot: string): NodeJS.ProcessEnv {
 }
 
 function resolveRustHelperLaunch(): RustHelperLaunch {
-  const workspaceRoot = findProjectRoot();
   const packagedBinaryPath = packagedAssetPath('native', 'openwhisper-native.exe');
   const packagedConfigPath = packagedAssetPath('config', 'whispercpp-profiles.json');
 
@@ -324,13 +324,14 @@ function resolveRustHelperLaunch(): RustHelperLaunch {
     }
     return {
       kind: 'binary',
-      workspaceRoot,
+      workspaceRoot: process.resourcesPath,
       binaryPath: packagedBinaryPath,
       cwd: process.resourcesPath,
       usePackagedAssets: true,
     };
   }
 
+  const workspaceRoot = findProjectRoot();
   const devBinaryPath = debugNativeBinaryCandidates(
     workspaceRoot,
     'openwhisper-native',
@@ -457,11 +458,44 @@ function startRustHelper(): Promise<string> {
   });
 }
 
+function waitForProcessExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.removeListener('exit', onExit);
+      resolve(false);
+    }, timeoutMs);
+
+    const onExit = (): void => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+
+    child.once('exit', onExit);
+  });
+}
+
+async function stopRustHelper(): Promise<void> {
+  const processToStop = rustProcess;
+  disconnectRust();
+
+  if (!processToStop) return;
+
+  const exited = await waitForProcessExit(processToStop, 3_000);
+  if (!exited && !processToStop.killed) {
+    processToStop.kill();
+    await waitForProcessExit(processToStop, 1_000);
+  }
+
+  if (rustProcess === processToStop) {
+    rustProcess = null;
+  }
+}
+
 /** Restarts the Rust helper and selected ASR worker so settings changes take effect. */
 async function restartEngine(): Promise<{ ok: boolean; error?: string }> {
-  disconnectRust();
-  rustProcess?.kill();
-  rustProcess = null;
+  await stopRustHelper();
   cachedRustHelperLaunch = null;
   clearPathsManifestCache();
   await new Promise((resolve) => setTimeout(resolve, 500));
@@ -521,10 +555,19 @@ function bootstrap(): void {
   // Tray application — keep running even when every window is closed.
   app.on('window-all-closed', () => {});
 
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
+    if (quitShutdownComplete) {
+      tray?.destroy();
+      return;
+    }
+
+    event.preventDefault();
     isQuitting = true;
-    rustProcess?.kill();
-    tray?.destroy();
+    void stopRustHelper().finally(() => {
+      quitShutdownComplete = true;
+      tray?.destroy();
+      app.quit();
+    });
   });
 }
 

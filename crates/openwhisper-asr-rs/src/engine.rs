@@ -333,7 +333,7 @@ impl WhisperCppEngine {
         config: &WhisperCppConfig,
         model: &str,
         device: &str,
-    ) -> Result<(String, ProfileConfig)> {
+    ) -> Result<(String, ProfileConfig, PathBuf)> {
         let model_key = normalize_model_key(model)?;
         let wanted_devices: &[&str] = match device {
             "auto" => &["gpu", "cpu"],
@@ -341,6 +341,8 @@ impl WhisperCppEngine {
             "cpu" => &["cpu"],
             other => anyhow::bail!("unsupported whisper.cpp device: {other}"),
         };
+        let allow_fallback = device == "auto";
+        let mut skipped_profiles = Vec::new();
 
         for wanted_device in wanted_devices {
             for (profile_name, raw_profile) in &config.profiles {
@@ -349,9 +351,23 @@ impl WhisperCppEngine {
                         format!("failed to parse whisper.cpp profile {profile_name}")
                     })?;
                 if profile.device == *wanted_device && profile.model == model_key {
-                    return Ok((profile_name.clone(), profile));
+                    match self.resolve_exe_path(&profile.binary_hint) {
+                        Ok(exe_path) => return Ok((profile_name.clone(), profile, exe_path)),
+                        Err(error) if allow_fallback => {
+                            skipped_profiles.push(format!("{profile_name}: {error}"));
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
             }
+        }
+
+        if !skipped_profiles.is_empty() {
+            anyhow::bail!(
+                "no usable whisper.cpp profile found for model={model} device={device}; skipped {}",
+                skipped_profiles.join("; ")
+            );
         }
 
         anyhow::bail!("no whisper.cpp profile found for model={model} device={device}")
@@ -445,9 +461,8 @@ impl WhisperCppEngine {
 impl AsrEngine for WhisperCppEngine {
     fn load_model(&mut self, model: &str, device: &str) -> Result<ModelLoadInfo> {
         let config = self.load_config()?;
-        let (_profile_name, profile) = self.select_profile(&config, model, device)?;
+        let (_profile_name, profile, exe_path) = self.select_profile(&config, model, device)?;
         let model_path = self.resolve_model_path(&config, &profile.model)?;
-        let exe_path = self.resolve_exe_path(&profile.binary_hint)?;
         let memory_mb = profile.benchmark.peak_ram_mb.unwrap_or(0.0);
         let language_config = read_asr_language_config();
         let language_flag = resolve_whisper_language_flag(&language_config);
@@ -793,6 +808,13 @@ mod tests {
         WhisperCppEngine,
     };
 
+    fn restore_env(name: &str, previous: Option<String>) {
+        match previous {
+            Some(value) => std::env::set_var(name, value),
+            None => std::env::remove_var(name),
+        }
+    }
+
     #[test]
     fn resolve_language_flag_uses_auto_for_auto_detect_or_multiple_languages() {
         let auto = AsrLanguageConfig {
@@ -920,6 +942,67 @@ mod tests {
         let error = engine.load_model("medium_en_q8", "cpu").unwrap_err();
 
         assert!(error.to_string().contains("model file does not exist"));
+    }
+
+    #[test]
+    fn auto_device_falls_back_to_cpu_when_gpu_binary_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_dir = dir.path().join("config");
+        let model_dir = dir.path().join("models");
+        let cpu_dir = dir.path().join("cpu");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::create_dir_all(&cpu_dir).unwrap();
+        let model_path = model_dir.join("model.bin");
+        let cpu_exe = cpu_dir.join("whisper-cli.exe");
+        std::fs::write(&model_path, b"model").unwrap();
+        std::fs::write(&cpu_exe, b"").unwrap();
+
+        let config_path = config_dir.join("whispercpp-profiles.json");
+        std::fs::write(
+            &config_path,
+            r#"{
+                "model_dir": {"env": "OPENWHISPER_MODEL_DIR_AUTO_FALLBACK_TEST", "default_relative_to_config": "../models"},
+                "models": {"medium_en_q8": {"file": "model.bin", "size_bytes": 5}},
+                "profiles": {
+                    "gpu": {
+                        "device": "gpu",
+                        "binary_hint": "gpu_cuda_sm120",
+                        "model": "medium_en_q8",
+                        "args": ["-l", "en"],
+                        "benchmark": {"peak_ram_mb": 2.0}
+                    },
+                    "cpu": {
+                        "device": "cpu",
+                        "binary_hint": "cpu_avx_vnni",
+                        "model": "medium_en_q8",
+                        "args": ["-l", "en"],
+                        "benchmark": {"peak_ram_mb": 1.0}
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let old_model_dir = std::env::var("OPENWHISPER_MODEL_DIR_AUTO_FALLBACK_TEST").ok();
+        let old_cpu = std::env::var("OPENWHISPER_WHISPERCPP_CPU_EXE").ok();
+        let old_gpu = std::env::var("OPENWHISPER_WHISPERCPP_GPU_EXE").ok();
+        std::env::set_var("OPENWHISPER_MODEL_DIR_AUTO_FALLBACK_TEST", &model_dir);
+        std::env::set_var("OPENWHISPER_WHISPERCPP_CPU_EXE", &cpu_exe);
+        std::env::set_var(
+            "OPENWHISPER_WHISPERCPP_GPU_EXE",
+            dir.path().join("missing").join("whisper-cli.exe"),
+        );
+
+        let mut engine = WhisperCppEngine::with_config_path(config_path);
+        let info = engine.load_model("medium_en_q8", "auto").unwrap();
+
+        assert_eq!(info.device, "cpu");
+        assert_eq!(info.memory_mb, 1.0);
+
+        restore_env("OPENWHISPER_MODEL_DIR_AUTO_FALLBACK_TEST", old_model_dir);
+        restore_env("OPENWHISPER_WHISPERCPP_CPU_EXE", old_cpu);
+        restore_env("OPENWHISPER_WHISPERCPP_GPU_EXE", old_gpu);
     }
 
     #[test]

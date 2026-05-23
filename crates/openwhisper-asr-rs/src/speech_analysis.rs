@@ -92,8 +92,7 @@ fn find_speech_span(
         return None;
     }
 
-    let noise_floor_rms = percentile(&levels, 0.10);
-    let threshold = adaptive_threshold(config, noise_floor_rms);
+    let threshold = config.rms_threshold;
     let mut start_sample = None;
     let mut end_sample = 0usize;
 
@@ -127,7 +126,7 @@ pub fn analyze_speech(samples: &[f32], config: VadConfig, sample_rate_hz: u32) -
     let effective_threshold = adaptive_threshold(config, noise_floor_rms);
     let speech_sample_count = levels
         .iter()
-        .filter(|level| **level >= effective_threshold)
+        .filter(|level| **level >= config.rms_threshold)
         .map(|_| window)
         .sum();
 
@@ -170,15 +169,6 @@ fn noise_and_peak_rms(levels: &[f32]) -> (f32, f32) {
     )
 }
 
-fn percentile(levels: &[f32], ratio: f32) -> f32 {
-    if levels.is_empty() {
-        return 0.0;
-    }
-    let mut sorted = levels.to_vec();
-    sorted.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
-    percentile_from_sorted(&sorted, ratio)
-}
-
 fn percentile_from_sorted(sorted: &[f32], ratio: f32) -> f32 {
     let index = ((sorted.len() - 1) as f32 * ratio.clamp(0.0, 1.0)).round() as usize;
     sorted[index]
@@ -186,7 +176,7 @@ fn percentile_from_sorted(sorted: &[f32], ratio: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::analyze_speech;
+    use super::{analyze_speech, trim_samples_to_speech_region};
     use crate::vad::VadConfig;
 
     fn test_config() -> VadConfig {

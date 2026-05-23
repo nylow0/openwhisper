@@ -8,7 +8,8 @@ use crate::buffering::{RingPcmBuffer, WindowPolicy};
 use crate::engine::{AsrEngine, Transcription};
 use crate::performance::ProcessSample;
 use crate::protocol::WorkerEvent;
-use crate::vad::{is_speech, VadConfig};
+use crate::speech_analysis::trim_samples_to_speech_region;
+use crate::vad::{has_sufficient_speech, is_speech, VadConfig};
 
 pub struct StreamingSession {
     events: Receiver<WorkerEvent>,
@@ -96,6 +97,7 @@ fn run_streaming_decoder(
                             &mut *engine,
                             &ring,
                             policy,
+                            vad,
                             &event_tx,
                             DecodeKind::Partial,
                         ) {
@@ -159,6 +161,7 @@ fn decode_window(
     engine: &mut dyn AsrEngine,
     ring: &RingPcmBuffer,
     policy: WindowPolicy,
+    vad: VadConfig,
     event_tx: &Sender<WorkerEvent>,
     kind: DecodeKind,
 ) -> DecodeOutcome {
@@ -166,7 +169,16 @@ fn decode_window(
         return DecodeOutcome::Skipped;
     }
 
-    let samples = ring.tail_window(policy.window_samples());
+    let window = ring.tail_window(policy.window_samples());
+    let samples = trim_samples_to_speech_region(&window, vad, policy.sample_rate_hz);
+    if samples.is_empty() || !has_sufficient_speech(&samples, vad, policy.sample_rate_hz) {
+        log::debug!(
+            "ASR {:?} decode skipped: window has insufficient speech",
+            kind
+        );
+        return DecodeOutcome::Skipped;
+    }
+
     let path = streaming_window_path();
     let decode_start = Instant::now();
     let event = match write_debug_wav(&path, &samples, WORKER_SAMPLE_RATE_HZ)
@@ -401,6 +413,7 @@ mod tests {
                     rms_threshold: 0.03,
                     min_samples: 1,
                     silence_ms: 20,
+                    min_speech_ms: 10,
                 },
             )
         });
@@ -426,6 +439,7 @@ mod tests {
             rms_threshold: 0.03,
             min_samples: 1,
             silence_ms,
+            min_speech_ms: 10,
         }
     }
 }

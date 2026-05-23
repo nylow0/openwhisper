@@ -3,7 +3,10 @@ mod buffering;
 mod engine;
 mod performance;
 mod protocol;
+mod speech_analysis;
+mod speech_gate;
 mod streaming;
+mod transcript_quality;
 mod vad;
 mod worker;
 

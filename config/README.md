@@ -26,6 +26,18 @@ Rust streaming dictation reads each profile's `vad.rms_threshold` and
 `vad.silence_ms` defaults. `OPENWHISPER_ASR_VAD_RMS_THRESHOLD` and
 `OPENWHISPER_ASR_VAD_SILENCE_MS` override them for local tuning.
 
+Before calling whisper.cpp, the worker checks that the recording has enough
+voiced audio with clear dynamics above the mic noise floor (not just a steady
+hum above a fixed RMS). `OPENWHISPER_ASR_MIN_SPEECH_MS` overrides the default
+250ms minimum. Silent or noise-only sessions return an empty transcript instead
+of running the decoder. Dictation audio is trimmed to the first→last voiced
+region (plus ~150/400ms padding) so releasing the hotkey after a short phrase
+does not re-decode minutes of leading/trailing silence.
+
+If whisper still emits junk, a language-agnostic post-filter uses token
+probabilities from `-ojf`, audio dynamics, repetition, and text density — not an
+English word list. Profiles pass `-ojf`, `-sns`, and `-nth 0.92`.
+
 `streaming.step_ms`, `streaming.length_ms`, and `streaming.keep_ms` configure
 Rust live decode windows. `OPENWHISPER_ASR_STREAM_STEP_MS`,
 `OPENWHISPER_ASR_STREAM_LENGTH_MS`, and `OPENWHISPER_ASR_STREAM_KEEP_MS`

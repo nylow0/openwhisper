@@ -279,7 +279,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
     })
 }
 
-#[allow(dead_code)]
 pub fn mixdown_to_mono_f32(interleaved: &[f32], channels: u16) -> Vec<f32> {
     let channel_count = channels.max(1) as usize;
     interleaved

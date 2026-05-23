@@ -17,7 +17,7 @@ use crate::protocol::{protocol_error, WorkerCommand, WorkerEvent};
 use crate::streaming::StreamingSession;
 
 pub fn run_stdio() -> anyhow::Result<()> {
-    log::info!("openwhisper-asr-rs worker started (speech-gate + transcript-quality active)");
+    log::info!("openwhisper-asr-rs worker started");
     let (line_tx, line_rx) = channel();
     thread::spawn(move || {
         let stdin = io::stdin();
@@ -446,7 +446,7 @@ mod tests {
     use serde_json::Value;
 
     use crate::engine::{AsrEngine, ModelLoadInfo, Transcription};
-    use crate::speech_gate::audio_file_has_sufficient_speech;
+    use crate::speech_gate::analyze_audio_file;
     use crate::transcript_quality::{scrub_transcript, DecodeQuality};
     use crate::vad::VadConfig;
 
@@ -480,7 +480,8 @@ mod tests {
         }
 
         fn transcribe_file(&mut self, audio_path: &Path) -> anyhow::Result<Transcription> {
-            if !audio_file_has_sufficient_speech(audio_path, VadConfig::default())? {
+            let config = VadConfig::default();
+            if !analyze_audio_file(audio_path, config)?.passes_dictation_gate(config) {
                 return Ok(Transcription {
                     text: String::new(),
                     words: Vec::new(),

@@ -5,11 +5,11 @@ use std::time::{Duration, Instant};
 
 use crate::audio_capture::{write_debug_wav, AudioChunkReceiver, WORKER_SAMPLE_RATE_HZ};
 use crate::buffering::{RingPcmBuffer, WindowPolicy};
-use crate::engine::{AsrEngine, Transcription};
+use crate::engine::AsrEngine;
 use crate::performance::ProcessSample;
 use crate::protocol::WorkerEvent;
-use crate::speech_analysis::trim_samples_to_speech_region;
-use crate::vad::{has_sufficient_speech, is_speech, VadConfig};
+use crate::speech_analysis::{analyze_speech, trim_samples_to_speech_region};
+use crate::vad::{is_speech, VadConfig};
 
 pub struct StreamingSession {
     events: Receiver<WorkerEvent>,
@@ -63,7 +63,6 @@ fn run_streaming_decoder(
     let mut first_speech_at = None;
     let mut silence_started_at = None;
     let mut partials = 0;
-    let finals = 0;
     let mut errors = 0;
 
     log::info!(
@@ -93,14 +92,7 @@ fn run_streaming_decoder(
                     samples_since_decode += chunk.len();
                     if samples_since_decode >= policy.step_samples() {
                         samples_since_decode = 0;
-                        match decode_window(
-                            &mut *engine,
-                            &ring,
-                            policy,
-                            vad,
-                            &event_tx,
-                            DecodeKind::Partial,
-                        ) {
+                        match decode_window(&mut *engine, &ring, policy, vad, &event_tx) {
                             DecodeOutcome::Transcript => {
                                 partials += 1;
                                 if partials == 1 {
@@ -134,21 +126,14 @@ fn run_streaming_decoder(
 
     let process_end = ProcessSample::capture();
     log::info!(
-        "ASR streaming stopped: session_ms={} partials={} finals={} errors={} process_cpu_delta_ms={:?} working_set_mb={:?}",
+        "ASR streaming stopped: session_ms={} partials={} errors={} process_cpu_delta_ms={:?} working_set_mb={:?}",
         elapsed_ms(session_start),
         partials,
-        finals,
         errors,
         process_cpu_delta_ms(process_start, process_end),
         process_end.working_set_mb
     );
     engine
-}
-
-#[derive(Clone, Copy, Debug)]
-enum DecodeKind {
-    Partial,
-    Final,
 }
 
 enum DecodeOutcome {
@@ -163,7 +148,6 @@ fn decode_window(
     policy: WindowPolicy,
     vad: VadConfig,
     event_tx: &Sender<WorkerEvent>,
-    kind: DecodeKind,
 ) -> DecodeOutcome {
     if ring.is_empty() {
         return DecodeOutcome::Skipped;
@@ -171,11 +155,12 @@ fn decode_window(
 
     let window = ring.tail_window(policy.window_samples());
     let samples = trim_samples_to_speech_region(&window, vad, policy.sample_rate_hz);
-    if samples.is_empty() || !has_sufficient_speech(&samples, vad, policy.sample_rate_hz) {
-        log::debug!(
-            "ASR {:?} decode skipped: window has insufficient speech",
-            kind
-        );
+    if samples.is_empty() {
+        log::debug!("ASR partial decode skipped: window has no voiced region");
+        return DecodeOutcome::Skipped;
+    }
+    if !analyze_speech(&samples, vad, policy.sample_rate_hz).passes_streaming_window_gate(vad) {
+        log::debug!("ASR partial decode skipped: window has insufficient speech");
         return DecodeOutcome::Skipped;
     }
 
@@ -186,18 +171,20 @@ fn decode_window(
     {
         Ok(transcription) => {
             log::debug!(
-                "ASR {:?} decode: window_samples={} wall_ms={} engine_ms={}",
-                kind,
+                "ASR partial decode: window_samples={} wall_ms={} engine_ms={}",
                 samples.len(),
                 elapsed_ms(decode_start),
                 transcription.processing_latency_ms
             );
-            transcript_event(transcription, kind)
+            WorkerEvent::TranscriptPartial {
+                text: transcription.text,
+                is_final: false,
+                processing_latency_ms: transcription.processing_latency_ms,
+            }
         }
         Err(error) => {
             log::warn!(
-                "ASR {:?} decode failed after {}ms: {}",
-                kind,
+                "ASR partial decode failed after {}ms: {}",
                 elapsed_ms(decode_start),
                 error
             );
@@ -215,22 +202,6 @@ fn decode_window(
     };
     let _ = event_tx.send(event);
     outcome
-}
-
-fn transcript_event(transcription: Transcription, kind: DecodeKind) -> WorkerEvent {
-    match kind {
-        DecodeKind::Partial => WorkerEvent::TranscriptPartial {
-            text: transcription.text,
-            is_final: false,
-            processing_latency_ms: transcription.processing_latency_ms,
-        },
-        DecodeKind::Final => WorkerEvent::TranscriptFinal {
-            text: transcription.text,
-            words: transcription.words,
-            language: transcription.language,
-            processing_latency_ms: transcription.processing_latency_ms,
-        },
-    }
 }
 
 fn streaming_window_path() -> PathBuf {

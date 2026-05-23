@@ -1,6 +1,6 @@
 //! Language-agnostic filters for whisper.cpp output on silence/noise.
 
-use crate::speech_analysis::SpeechAnalysis;
+use crate::speech_analysis::{SpeechAnalysis, MIN_PEAK_TO_FLOOR_RATIO};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct DecodeQuality {
@@ -93,7 +93,7 @@ pub fn should_discard_transcript(
     }
 
     // Fallback when token probabilities are unavailable (no -ojf).
-    speech.peak_to_noise_ratio() < 4.0 && trimmed.chars().count() <= 24
+    speech.peak_to_noise_ratio() < MIN_PEAK_TO_FLOOR_RATIO && trimmed.chars().count() <= 24
 }
 
 fn is_sparse_text_on_long_audio(text: &str, audio_duration_ms: u64) -> bool {
@@ -153,6 +153,19 @@ mod tests {
         assert!(quality.avg_content_token_probability.unwrap() < 0.35);
         assert_eq!(
             scrub_transcript("you", quality, flat_noise_speech()),
+            ""
+        );
+    }
+
+    #[test]
+    fn low_confidence_repeated_tokens_are_discarded() {
+        let quality = DecodeQuality {
+            audio_duration_ms: 30_000,
+            content_token_count: 1,
+            avg_content_token_probability: Some(0.17),
+        };
+        assert_eq!(
+            scrub_transcript("you you you", quality, flat_noise_speech()),
             ""
         );
     }

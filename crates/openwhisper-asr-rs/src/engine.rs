@@ -9,8 +9,7 @@ use serde_json::Value;
 
 use crate::buffering::WindowPolicy;
 use crate::protocol::WordResult;
-use crate::performance::audio_duration_ms;
-use crate::speech_gate::{analyze_audio_file, prepare_decode_audio_path};
+use crate::speech_gate::prepare_decode_audio;
 use crate::transcript_quality::{scrub_transcript, DecodeQuality};
 use crate::vad::VadConfig;
 
@@ -477,8 +476,7 @@ impl AsrEngine for WhisperCppEngine {
         }
 
         let vad = self.vad_config();
-        let (decode_path, trimmed_temp) = prepare_decode_audio_path(audio_path, vad)?;
-        let speech = analyze_audio_file(&decode_path, vad)?;
+        let (decode_path, trimmed_temp, speech) = prepare_decode_audio(audio_path, vad)?;
         if !speech.passes_dictation_gate(vad) {
             if let Some(temp) = trimmed_temp {
                 let _ = std::fs::remove_file(temp);
@@ -548,7 +546,10 @@ impl AsrEngine for WhisperCppEngine {
         })?;
         let _ = std::fs::remove_file(&json_path);
 
-        let audio_duration_ms = audio_duration_ms(&decode_path).unwrap_or(0);
+        let audio_duration_ms = speech
+            .total_samples
+            .saturating_mul(1000)
+            .saturating_div(speech.sample_rate_hz.max(1) as usize) as u64;
         let decode_quality = DecodeQuality::from_whisper_payload(&payload, audio_duration_ms);
         let mut transcription = parse_whisper_cpp_payload(&payload, elapsed_ms)?;
         validate_transcription_language(&transcription.language, &self.language_config)?;

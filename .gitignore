@@ -26,6 +26,7 @@ rust-out.log
 rust-err.log
 test-pipe.js
 run-test.ps1
+temp-test-*.json
 .plan/
 
 # Local machine state

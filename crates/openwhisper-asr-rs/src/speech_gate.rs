@@ -3,9 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use hound::SampleFormat;
 
-use crate::audio_capture::{i16_to_f32, write_debug_wav};
+use crate::audio_capture::{i16_to_f32, mixdown_to_mono_f32, write_debug_wav};
 use crate::speech_analysis::{analyze_speech, trim_samples_to_speech_region, SpeechAnalysis};
-use crate::transcript_quality::{DecodeQuality, should_discard_transcript as should_discard_by_quality};
 use crate::vad::VadConfig;
 
 pub fn analyze_audio_file(path: &Path, config: VadConfig) -> Result<SpeechAnalysis> {
@@ -13,14 +12,20 @@ pub fn analyze_audio_file(path: &Path, config: VadConfig) -> Result<SpeechAnalys
     Ok(analyze_speech(&samples, config, sample_rate_hz))
 }
 
-/// Trims leading/trailing silence so whisper.cpp only decodes the spoken segment.
-pub fn prepare_decode_audio_path(source: &Path, config: VadConfig) -> Result<(PathBuf, Option<PathBuf>)> {
+/// Loads audio once, optionally trims to the voiced region, and returns speech metrics for that decode input.
+pub fn prepare_decode_audio(
+    source: &Path,
+    config: VadConfig,
+) -> Result<(PathBuf, Option<PathBuf>, SpeechAnalysis)> {
     let (samples, sample_rate_hz) = load_wav_mono_f32(source)?;
     let trimmed = trim_samples_to_speech_region(&samples, config, sample_rate_hz);
+
     if trimmed.is_empty() || trimmed.len() == samples.len() {
-        return Ok((source.to_path_buf(), None));
+        let speech = analyze_speech(&samples, config, sample_rate_hz);
+        return Ok((source.to_path_buf(), None, speech));
     }
 
+    let speech = analyze_speech(&trimmed, config, sample_rate_hz);
     let path = std::env::temp_dir().join(format!(
         "openwhisper-asr-rs-trimmed-{}-{}.wav",
         std::process::id(),
@@ -35,30 +40,15 @@ pub fn prepare_decode_audio_path(source: &Path, config: VadConfig) -> Result<(Pa
         samples.len() as f32 / sample_rate_hz as f32,
         trimmed.len() as f32 / sample_rate_hz as f32
     );
-    let temp = path.clone();
-    Ok((path, Some(temp)))
+    Ok((path, Some(path.clone()), speech))
 }
 
-pub fn audio_file_has_sufficient_speech(path: &Path, config: VadConfig) -> Result<bool> {
-    Ok(analyze_audio_file(path, config)?.passes_dictation_gate(config))
-}
-
-pub fn should_discard_transcript(text: &str, path: &Path, config: VadConfig) -> Result<bool> {
-    let speech = analyze_audio_file(path, config)?;
-    let quality = DecodeQuality {
-        audio_duration_ms: 30_000,
-        content_token_count: 1,
-        avg_content_token_probability: Some(0.17),
-    };
-    Ok(should_discard_by_quality(text, quality, speech))
-}
-
-pub fn load_wav_mono_f32(path: &Path) -> Result<(Vec<f32>, u32)> {
+fn load_wav_mono_f32(path: &Path) -> Result<(Vec<f32>, u32)> {
     let mut reader = hound::WavReader::open(path)
         .with_context(|| format!("failed to open wav for speech gate: {}", path.display()))?;
     let spec = reader.spec();
     let sample_rate_hz = spec.sample_rate;
-    let channels = spec.channels.max(1) as usize;
+    let channels = spec.channels.max(1);
 
     let mono = match spec.sample_format {
         SampleFormat::Float => {
@@ -66,14 +56,14 @@ pub fn load_wav_mono_f32(path: &Path) -> Result<(Vec<f32>, u32)> {
                 .samples::<f32>()
                 .collect::<Result<Vec<_>, _>>()
                 .context("failed to read float wav samples")?;
-            mixdown_to_mono(&interleaved, channels)
+            mixdown_to_mono_f32(&interleaved, channels)
         }
         SampleFormat::Int if spec.bits_per_sample <= 16 => {
             let interleaved = reader
                 .samples::<i16>()
                 .collect::<Result<Vec<_>, _>>()
                 .context("failed to read i16 wav samples")?;
-            mixdown_to_mono(&i16_to_f32(&interleaved), channels)
+            mixdown_to_mono_f32(&i16_to_f32(&interleaved), channels)
         }
         SampleFormat::Int => {
             let interleaved = reader
@@ -84,22 +74,11 @@ pub fn load_wav_mono_f32(path: &Path) -> Result<(Vec<f32>, u32)> {
                 .iter()
                 .map(|sample| *sample as f32 / i32::MAX as f32)
                 .collect::<Vec<_>>();
-            mixdown_to_mono(&normalized, channels)
+            mixdown_to_mono_f32(&normalized, channels)
         }
     };
 
     Ok((mono, sample_rate_hz))
-}
-
-fn mixdown_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
-    if channels <= 1 {
-        return samples.to_vec();
-    }
-
-    samples
-        .chunks(channels)
-        .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-        .collect()
 }
 
 #[cfg(test)]
@@ -108,7 +87,8 @@ mod tests {
 
     use hound::{SampleFormat, WavSpec, WavWriter};
 
-    use super::{audio_file_has_sufficient_speech, should_discard_transcript};
+    use super::analyze_audio_file;
+    use crate::transcript_quality::{should_discard_transcript, DecodeQuality};
     use crate::vad::VadConfig;
 
     fn write_test_wav(path: &PathBuf, samples: &[f32], sample_rate: u32) {
@@ -128,12 +108,7 @@ mod tests {
     }
 
     fn test_config() -> VadConfig {
-        VadConfig {
-            rms_threshold: 0.015,
-            min_samples: 160,
-            silence_ms: 900,
-            min_speech_ms: 250,
-        }
+        VadConfig::default()
     }
 
     #[test]
@@ -146,7 +121,8 @@ mod tests {
                 .as_nanos()
         ));
         write_test_wav(&path, &vec![0.0; 16_000], 16_000);
-        assert!(!audio_file_has_sufficient_speech(&path, test_config()).unwrap());
+        let speech = analyze_audio_file(&path, test_config()).unwrap();
+        assert!(!speech.passes_dictation_gate(test_config()));
         let _ = std::fs::remove_file(path);
     }
 
@@ -160,7 +136,8 @@ mod tests {
                 .as_nanos()
         ));
         write_test_wav(&path, &vec![0.02; 32_000], 16_000);
-        assert!(!audio_file_has_sufficient_speech(&path, test_config()).unwrap());
+        let speech = analyze_audio_file(&path, test_config()).unwrap();
+        assert!(!speech.passes_dictation_gate(test_config()));
         let _ = std::fs::remove_file(path);
     }
 
@@ -176,7 +153,8 @@ mod tests {
         let mut samples = vec![0.008; 24_000];
         samples[8_000..16_000].fill(0.07);
         write_test_wav(&path, &samples, 16_000);
-        assert!(audio_file_has_sufficient_speech(&path, test_config()).unwrap());
+        let speech = analyze_audio_file(&path, test_config()).unwrap();
+        assert!(speech.passes_dictation_gate(test_config()));
         let _ = std::fs::remove_file(path);
     }
 
@@ -190,7 +168,13 @@ mod tests {
                 .as_nanos()
         ));
         write_test_wav(&path, &vec![0.02; 32_000], 16_000);
-        assert!(should_discard_transcript("you", &path, test_config()).unwrap());
+        let speech = analyze_audio_file(&path, test_config()).unwrap();
+        let quality = DecodeQuality {
+            audio_duration_ms: 2_000,
+            content_token_count: 1,
+            avg_content_token_probability: Some(0.17),
+        };
+        assert!(should_discard_transcript("you", quality, speech));
         let _ = std::fs::remove_file(path);
     }
 }

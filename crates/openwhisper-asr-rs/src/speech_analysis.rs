@@ -1,10 +1,12 @@
 use crate::vad::{rms_level, VadConfig};
 
-/// Inclusive start and exclusive end sample indices for voiced audio.
+/// Minimum peak/noise ratio for dictation gate and transcript fallback without token probs.
+pub(crate) const MIN_PEAK_TO_FLOOR_RATIO: f32 = 4.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpeechSpan {
-    pub start_sample: usize,
-    pub end_sample: usize,
+struct SpeechSpan {
+    start_sample: usize,
+    end_sample: usize,
 }
 
 /// Summary of how much real speech energy is present in a PCM buffer.
@@ -31,8 +33,7 @@ impl SpeechAnalysis {
         }
 
         // Stationary fan/hum keeps a narrow RMS band; real speech spans quiet + loud windows.
-        const MIN_PEAK_TO_FLOOR: f32 = 4.0;
-        if self.peak_to_noise_ratio() < MIN_PEAK_TO_FLOOR {
+        if self.peak_to_noise_ratio() < MIN_PEAK_TO_FLOOR_RATIO {
             return false;
         }
 
@@ -80,7 +81,7 @@ pub fn trim_samples_to_speech_region(
     samples.get(start..end).unwrap_or(&[]).to_vec()
 }
 
-pub fn find_speech_span(
+fn find_speech_span(
     samples: &[f32],
     config: VadConfig,
     sample_rate_hz: u32,
@@ -105,9 +106,6 @@ pub fn find_speech_span(
     }
 
     let start_sample = start_sample?;
-    if end_sample <= start_sample {
-        return None;
-    }
 
     const PAD_BEFORE_MS: u32 = 150;
     const PAD_AFTER_MS: u32 = 400;
@@ -125,8 +123,7 @@ pub fn find_speech_span(
 pub fn analyze_speech(samples: &[f32], config: VadConfig, sample_rate_hz: u32) -> SpeechAnalysis {
     let window = config.min_samples.max(1);
     let levels = rms_windows(samples, window);
-    let noise_floor_rms = percentile(&levels, 0.10);
-    let peak_rms = percentile(&levels, 0.95);
+    let (noise_floor_rms, peak_rms) = noise_and_peak_rms(&levels);
     let effective_threshold = adaptive_threshold(config, noise_floor_rms);
     let speech_sample_count = levels
         .iter()
@@ -161,12 +158,28 @@ fn rms_windows(samples: &[f32], window: usize) -> Vec<f32> {
         .collect()
 }
 
+fn noise_and_peak_rms(levels: &[f32]) -> (f32, f32) {
+    if levels.is_empty() {
+        return (0.0, 0.0);
+    }
+    let mut sorted = levels.to_vec();
+    sorted.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    (
+        percentile_from_sorted(&sorted, 0.10),
+        percentile_from_sorted(&sorted, 0.95),
+    )
+}
+
 fn percentile(levels: &[f32], ratio: f32) -> f32 {
     if levels.is_empty() {
         return 0.0;
     }
     let mut sorted = levels.to_vec();
     sorted.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    percentile_from_sorted(&sorted, ratio)
+}
+
+fn percentile_from_sorted(sorted: &[f32], ratio: f32) -> f32 {
     let index = ((sorted.len() - 1) as f32 * ratio.clamp(0.0, 1.0)).round() as usize;
     sorted[index]
 }
@@ -174,16 +187,10 @@ fn percentile(levels: &[f32], ratio: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::analyze_speech;
-    use crate::transcript_quality::{scrub_transcript, DecodeQuality};
     use crate::vad::VadConfig;
 
     fn test_config() -> VadConfig {
-        VadConfig {
-            rms_threshold: 0.015,
-            min_samples: 160,
-            silence_ms: 900,
-            min_speech_ms: 250,
-        }
+        VadConfig::default()
     }
 
     #[test]
@@ -208,23 +215,5 @@ mod tests {
         let trimmed = trim_samples_to_speech_region(&samples, test_config(), 16_000);
         assert!(trimmed.len() < 10_000);
         assert!(trimmed.len() > 500);
-    }
-
-    #[test]
-    fn quality_filter_removes_low_confidence_repeated_tokens() {
-        let speech = SpeechAnalysis {
-            sample_rate_hz: 16_000,
-            noise_floor_rms: 0.02,
-            peak_rms: 0.023,
-            effective_threshold: 0.09,
-            speech_sample_count: 4_000,
-            total_samples: 32_000,
-        };
-        let quality = DecodeQuality {
-            audio_duration_ms: 30_000,
-            content_token_count: 1,
-            avg_content_token_probability: Some(0.17),
-        };
-        assert_eq!(scrub_transcript("you you you", quality, speech), "");
     }
 }

@@ -9,8 +9,6 @@ Current scope:
 - CPAL device discovery and PCM conversion helpers.
 - WAV diagnostics writer via `hound`.
 - Ring buffer and baseline RMS VAD primitives for streaming work.
-- Speech gate skips whisper.cpp when a recording has no real speech (adaptive noise floor + dynamics check).
-- Post-decode quality filter uses whisper token probabilities (`-ojf`) and audio heuristics, not per-language word lists.
 
 Run locally:
 

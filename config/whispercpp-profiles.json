@@ -34,9 +34,9 @@
       "device": "cpu",
       "binary_hint": "cpu_avx_vnni",
       "model": "medium_en_q8",
-      "args": ["-l", "en", "-nt", "-ojf", "-np", "-sns", "-nth", "0.92", "-t", "16", "-ac", "1024"],
+      "args": ["-l", "en", "-nt", "-oj", "-np", "-t", "16", "-ac", "1024"],
       "vad": {
-        "rms_threshold": 0.02,
+        "rms_threshold": 0.015,
         "silence_ms": 900
       },
       "streaming": {
@@ -57,9 +57,9 @@
       "device": "cpu",
       "binary_hint": "cpu_avx_vnni",
       "model": "large_v3_turbo_q8",
-      "args": ["-l", "auto", "-nt", "-ojf", "-np", "-sns", "-nth", "0.92", "-t", "16", "-ac", "1024"],
+      "args": ["-l", "auto", "-nt", "-oj", "-np", "-t", "16", "-ac", "1024"],
       "vad": {
-        "rms_threshold": 0.02,
+        "rms_threshold": 0.015,
         "silence_ms": 900
       },
       "streaming": {
@@ -80,9 +80,9 @@
       "device": "gpu",
       "binary_hint": "gpu_cuda_sm120",
       "model": "medium_en_q8",
-      "args": ["-l", "en", "-nt", "-ojf", "-np", "-sns", "-nth", "0.92"],
+      "args": ["-l", "en", "-nt", "-oj", "-np"],
       "vad": {
-        "rms_threshold": 0.02,
+        "rms_threshold": 0.015,
         "silence_ms": 900
       },
       "streaming": {
@@ -103,9 +103,9 @@
       "device": "gpu",
       "binary_hint": "gpu_cuda_sm120",
       "model": "large_v3_turbo_q8",
-      "args": ["-l", "auto", "-nt", "-ojf", "-np", "-sns", "-nth", "0.92"],
+      "args": ["-l", "auto", "-nt", "-oj", "-np"],
       "vad": {
-        "rms_threshold": 0.02,
+        "rms_threshold": 0.015,
         "silence_ms": 900
       },
       "streaming": {

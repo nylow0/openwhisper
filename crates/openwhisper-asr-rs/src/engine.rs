@@ -9,7 +9,6 @@ use serde_json::Value;
 
 use crate::buffering::WindowPolicy;
 use crate::protocol::WordResult;
-use crate::speech_gate::prepare_decode_audio;
 use crate::vad::VadConfig;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -489,8 +488,7 @@ impl AsrEngine for WhisperCppEngine {
             anyhow::bail!("audio file does not exist: {}", audio_path.display());
         }
 
-        let vad = self.vad_config();
-        let (decode_path, trimmed_temp, _speech) = prepare_decode_audio(audio_path, vad)?;
+        let decode_path = canonicalize_existing_path(audio_path)?;
 
         if self.selection.is_none() {
             let model = std::env::var("OPENWHISPER_ASR_MODEL")
@@ -547,9 +545,6 @@ impl AsrEngine for WhisperCppEngine {
 
         let transcription = parse_whisper_cpp_payload(&payload, elapsed_ms)?;
         validate_transcription_language(&transcription.language, &self.language_config)?;
-        if let Some(temp) = trimmed_temp {
-            let _ = std::fs::remove_file(temp);
-        }
         Ok(transcription)
     }
 
@@ -674,10 +669,7 @@ pub fn parse_whisper_cpp_payload(
     let text = transcription
         .iter()
         .filter_map(|item| item.get("text").and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
+        .collect::<String>();
 
     Ok(Transcription {
         text,
@@ -827,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_whisper_cpp_json_segments_into_final_text() {
+    fn parses_whisper_cpp_json_segments_into_final_text_without_cleanup() {
         let result = parse_whisper_cpp_payload(
             &json!({
                 "result": {"language": "en"},
@@ -840,7 +832,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.text, "hello world");
+        assert_eq!(result.text, " hello world ");
         assert_eq!(result.language.as_deref(), Some("en"));
         assert_eq!(result.processing_latency_ms, 123);
     }

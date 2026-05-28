@@ -8,7 +8,6 @@ use crate::buffering::{RingPcmBuffer, WindowPolicy};
 use crate::engine::AsrEngine;
 use crate::performance::ProcessSample;
 use crate::protocol::WorkerEvent;
-use crate::speech_analysis::{analyze_speech, trim_samples_to_speech_region};
 use crate::vad::{is_speech, VadConfig};
 
 pub struct StreamingSession {
@@ -92,7 +91,7 @@ fn run_streaming_decoder(
                     samples_since_decode += chunk.len();
                     if samples_since_decode >= policy.step_samples() {
                         samples_since_decode = 0;
-                        match decode_window(&mut *engine, &ring, policy, vad, &event_tx) {
+                        match decode_window(&mut *engine, &ring, policy, &event_tx) {
                             DecodeOutcome::Transcript => {
                                 partials += 1;
                                 if partials == 1 {
@@ -146,24 +145,13 @@ fn decode_window(
     engine: &mut dyn AsrEngine,
     ring: &RingPcmBuffer,
     policy: WindowPolicy,
-    vad: VadConfig,
     event_tx: &Sender<WorkerEvent>,
 ) -> DecodeOutcome {
     if ring.is_empty() {
         return DecodeOutcome::Skipped;
     }
 
-    let window = ring.tail_window(policy.window_samples());
-    let samples = trim_samples_to_speech_region(&window, vad, policy.sample_rate_hz);
-    if samples.is_empty() {
-        log::debug!("ASR partial decode skipped: window has no voiced region");
-        return DecodeOutcome::Skipped;
-    }
-    if !analyze_speech(&samples, vad, policy.sample_rate_hz).passes_streaming_window_gate(vad) {
-        log::debug!("ASR partial decode skipped: window has insufficient speech");
-        return DecodeOutcome::Skipped;
-    }
-
+    let samples = ring.tail_window(policy.window_samples());
     let path = streaming_window_path();
     let decode_start = Instant::now();
     let event = match write_debug_wav(&path, &samples, WORKER_SAMPLE_RATE_HZ)
@@ -384,7 +372,6 @@ mod tests {
                     rms_threshold: 0.03,
                     min_samples: 1,
                     silence_ms: 20,
-                    min_speech_ms: 10,
                 },
             )
         });
@@ -410,7 +397,6 @@ mod tests {
             rms_threshold: 0.03,
             min_samples: 1,
             silence_ms,
-            min_speech_ms: 10,
         }
     }
 }

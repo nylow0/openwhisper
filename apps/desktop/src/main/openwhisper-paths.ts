@@ -3,8 +3,10 @@ import * as path from 'path';
 
 type PathsManifest = {
   windowsMsvcTarget: string;
+  linuxGnuTarget: string;
   debugTargetSubdirs: string[][];
   executables: Record<string, string>;
+  executables_linux: Record<string, string>;
 };
 
 let cachedManifest: PathsManifest | null = null;
@@ -16,19 +18,25 @@ export function loadOpenwhisperPathsManifest(workspaceRoot: string): PathsManife
   return cachedManifest;
 }
 
+function platformExecutables(manifest: PathsManifest): Record<string, string> {
+  return process.platform === 'win32' ? manifest.executables : manifest.executables_linux;
+}
+
 export function debugNativeBinaryCandidates(
   workspaceRoot: string,
   crateFolder: string,
-  executableKey: keyof PathsManifest['executables']
+  executableKey: string
 ): string[] {
   const manifest = loadOpenwhisperPathsManifest(workspaceRoot);
-  const exeName = manifest.executables[executableKey];
+  const exeName = platformExecutables(manifest)[executableKey];
+  if (!exeName) return [];
   const crateRoot = path.join(workspaceRoot, 'crates', crateFolder);
   return manifest.debugTargetSubdirs.map((segments) => path.join(crateRoot, ...segments, exeName));
 }
 
-export function windowsMsvcTarget(workspaceRoot: string): string {
-  return loadOpenwhisperPathsManifest(workspaceRoot).windowsMsvcTarget;
+export function nativeTarget(workspaceRoot: string): string {
+  const manifest = loadOpenwhisperPathsManifest(workspaceRoot);
+  return process.platform === 'win32' ? manifest.windowsMsvcTarget : manifest.linuxGnuTarget;
 }
 
 export function clearPathsManifestCache(): void {

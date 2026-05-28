@@ -14,7 +14,7 @@ import { createAppIcon } from './tray-icon.js';
 import {
   clearPathsManifestCache,
   debugNativeBinaryCandidates,
-  windowsMsvcTarget,
+  nativeTarget,
 } from './openwhisper-paths.js';
 import { loadJson, saveJson } from './store.js';
 import { SUPPORTED_ASR_LANGUAGES, type AppSettings, type AsrLanguageCode } from '../shared/types.js';
@@ -414,7 +414,7 @@ function startRustHelper(): Promise<string> {
         [
           'run',
           '--target',
-          windowsMsvcTarget(launch.workspaceRoot),
+          nativeTarget(launch.workspaceRoot),
           '--',
           '--pipe-pid',
           String(electronPid),

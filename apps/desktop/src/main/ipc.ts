@@ -33,15 +33,19 @@ class RustClient extends EventEmitter {
   private buffer = '';
   private pendingRequests = new Map<string, PendingRequest>();
 
-  connect(pipeName: string): Promise<void> {
+  connect(address: string): Promise<void> {
     return new Promise((resolve, reject) => {
       let settled = false;
       const timeout = setTimeout(() => {
         settled = true;
-        reject(new Error(`Timeout connecting to Rust on ${pipeName}`));
+        reject(new Error(`Timeout connecting to Rust on ${address}`));
       }, 10_000);
 
-      this.socket = net.createConnection(pipeName, () => {
+      const connectOptions = address.startsWith('\\\\.\\pipe\\')
+        ? { path: address }
+        : { path: address };
+
+      this.socket = net.createConnection(connectOptions, () => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);

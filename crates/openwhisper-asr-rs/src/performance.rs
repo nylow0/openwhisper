@@ -151,7 +151,43 @@ fn file_time_ms(low: u32, high: u32) -> u64 {
     (((high as u64) << 32) | low as u64) / 10_000
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn process_sample() -> ProcessSample {
+    let cpu_ms = read_proc_cpu_ms();
+    let working_set_mb = read_proc_rss_mb();
+    ProcessSample { cpu_ms, working_set_mb }
+}
+
+#[cfg(target_os = "linux")]
+fn read_proc_cpu_ms() -> Option<u64> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let fields: Vec<&str> = stat.split_whitespace().collect();
+    if fields.len() < 15 {
+        return None;
+    }
+    let utime: u64 = fields[13].parse().ok()?;
+    let stime: u64 = fields[14].parse().ok()?;
+    let ticks_per_sec = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as u64;
+    if ticks_per_sec == 0 {
+        return None;
+    }
+    Some((utime + stime) * 1000 / ticks_per_sec)
+}
+
+#[cfg(target_os = "linux")]
+fn read_proc_rss_mb() -> Option<f64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        if let Some(value) = line.strip_prefix("VmRSS:") {
+            let kb_str = value.trim().trim_end_matches(" kB").trim();
+            let kb: f64 = kb_str.parse().ok()?;
+            return Some(kb / 1024.0);
+        }
+    }
+    None
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn process_sample() -> ProcessSample {
     ProcessSample::default()
 }

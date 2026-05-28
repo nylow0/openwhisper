@@ -123,7 +123,6 @@ fn is_special_whisper_token(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{scrub_transcript, DecodeQuality};
-    use super::DecodeQuality::from_whisper_payload;
     use crate::speech_analysis::{analyze_speech, SpeechAnalysis};
     use crate::vad::VadConfig;
 

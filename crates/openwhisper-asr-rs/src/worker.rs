@@ -445,7 +445,7 @@ mod tests {
 
     use serde_json::Value;
 
-    use crate::engine::{AsrEngine, ModelLoadInfo, Transcription};
+    use crate::engine::{AsrEngine, MockEngine, ModelLoadInfo, Transcription};
     use crate::speech_gate::analyze_audio_file;
     use crate::transcript_quality::{scrub_transcript, DecodeQuality};
     use crate::vad::VadConfig;

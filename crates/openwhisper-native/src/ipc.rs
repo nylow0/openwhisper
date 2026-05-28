@@ -2,14 +2,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use crate::ipc_protocol::{IpcCommand, IpcEvent};
 
 pub struct IpcServer {
-    pipe_name: String,
+    address: String,
     tx: mpsc::Sender<IpcCommand>,
     rx: mpsc::Receiver<IpcEvent>,
     event_tx: mpsc::Sender<IpcEvent>,
@@ -17,12 +16,12 @@ pub struct IpcServer {
 
 impl IpcServer {
     pub fn new(pid: u32) -> (Self, mpsc::Receiver<IpcCommand>, mpsc::Sender<IpcEvent>) {
-        let pipe_name = format!(r"\\.\pipe\OpenWhisper-{}", pid);
+        let address = ipc_address(pid);
         let (cmd_tx, cmd_rx) = mpsc::channel::<IpcCommand>(100);
         let (event_tx, event_rx) = mpsc::channel::<IpcEvent>(100);
 
         let server = IpcServer {
-            pipe_name: pipe_name.clone(),
+            address: address.clone(),
             tx: cmd_tx,
             rx: event_rx,
             event_tx: event_tx.clone(),
@@ -32,20 +31,37 @@ impl IpcServer {
     }
 
     pub async fn run(self) -> Result<()> {
-        let pipe_name = self.pipe_name.clone();
-        log::info!("Starting IPC server on {}", pipe_name);
-        println!("Starting IPC server on {}", pipe_name);
+        log::info!("Starting IPC server on {}", self.address);
+        println!("Starting IPC server on {}", self.address);
+        self.run_platform().await
+    }
+}
 
-        // Create initial pipe instance
+#[cfg(windows)]
+fn ipc_address(pid: u32) -> String {
+    format!(r"\\.\pipe\OpenWhisper-{}", pid)
+}
+
+#[cfg(unix)]
+fn ipc_address(pid: u32) -> String {
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| "/tmp".to_string());
+    format!("{}/openwhisper-{}.sock", runtime_dir, pid)
+}
+
+#[cfg(windows)]
+impl IpcServer {
+    async fn run_platform(self) -> Result<()> {
+        use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+
         let server = ServerOptions::new()
             .first_pipe_instance(true)
-            .create(&pipe_name)?;
+            .create(&self.address)?;
 
-        self.handle_connection(server).await?;
-        Ok(())
+        self.handle_connection_windows(server).await
     }
 
-    async fn handle_connection(self, server: NamedPipeServer) -> Result<()> {
+    async fn handle_connection_windows(self, server: NamedPipeServer) -> Result<()> {
         log::info!("Waiting for Electron to connect...");
 
         match timeout(Duration::from_secs(30), server.connect()).await {
@@ -62,13 +78,52 @@ impl IpcServer {
 
         log::info!("Electron connected via named pipe");
 
-        let (reader, mut writer) = tokio::io::split(server);
-        let mut buf_reader = BufReader::new(reader);
-        let mut line = String::new();
+        let (reader, writer) = tokio::io::split(server);
+        self.handle_streams(BufReader::new(reader), writer).await
+    }
+}
 
-        // Spawn event sender task
+#[cfg(unix)]
+impl IpcServer {
+    async fn run_platform(self) -> Result<()> {
+        use tokio::net::UnixListener;
+
+        let socket_path = &self.address;
+
+        // Remove stale socket file if it exists.
+        let _ = std::fs::remove_file(socket_path);
+
+        let listener = UnixListener::bind(socket_path)?;
+        log::info!("Waiting for Electron to connect...");
+
+        let stream = match timeout(Duration::from_secs(30), listener.accept()).await {
+            Ok(Ok((stream, _addr))) => stream,
+            Ok(Err(e)) => {
+                log::error!("Unix socket accept error: {}", e);
+                return Err(e.into());
+            }
+            Err(_) => {
+                log::error!("Timeout waiting for Electron connection");
+                return Err(anyhow::anyhow!("Timeout waiting for Electron connection"));
+            }
+        };
+
+        log::info!("Electron connected via Unix socket");
+
+        let (reader, writer) = tokio::io::split(stream);
+        self.handle_streams(BufReader::new(reader), writer).await
+    }
+}
+
+impl IpcServer {
+    async fn handle_streams<R, W>(self, mut buf_reader: BufReader<R>, mut writer: W) -> Result<()>
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+        W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
         let mut event_rx = self.rx;
-        let event_tx_for_error = self.event_tx.clone();
+        let _event_tx_for_error = self.event_tx.clone();
+
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
                 let json = match serde_json::to_string(&event) {
@@ -94,7 +149,7 @@ impl IpcServer {
             log::info!("IPC event sender task shutting down");
         });
 
-        // Read commands from Electron
+        let mut line = String::new();
         loop {
             line.clear();
             match timeout(Duration::from_secs(5), buf_reader.read_line(&mut line)).await {
@@ -116,7 +171,7 @@ impl IpcServer {
                         }
                         Err(e) => {
                             log::error!("Failed to parse IPC command: {} | raw: {}", e, trimmed);
-                            let _ = event_tx_for_error.send(IpcEvent::Error {
+                            let _ = self.event_tx.send(IpcEvent::Error {
                                 code: "PROTOCOL_ERROR".to_string(),
                                 message: format!("Invalid command: {}", e),
                                 recoverable: true,
@@ -129,7 +184,6 @@ impl IpcServer {
                     break;
                 }
                 Err(_) => {
-                    // Timeout on read - this is normal, just continue
                     continue;
                 }
             }

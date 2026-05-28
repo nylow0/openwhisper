@@ -186,7 +186,7 @@ fn percentile_from_sorted(sorted: &[f32], ratio: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::analyze_speech;
+    use super::{analyze_speech, trim_samples_to_speech_region};
     use crate::vad::VadConfig;
 
     fn test_config() -> VadConfig {

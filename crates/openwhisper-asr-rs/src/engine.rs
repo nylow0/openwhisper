@@ -725,13 +725,21 @@ fn normalize_model_key(model: &str) -> Result<&'static str> {
 
 fn local_binary_candidates(binary_hint: &str) -> &'static [&'static str] {
     match binary_hint {
-        "cpu_avx_vnni" => &[
+        "cpu_avx_vnni" if cfg!(windows) => &[
             ".local/whispercpp-src/build-cpu-avxvnni-local/bin/whisper-cli.exe",
             ".local/whispercpp/bin/Release/whisper-cli.exe",
         ],
-        "gpu_cuda_sm120" => &[
+        "cpu_avx_vnni" => &[
+            ".local/whispercpp-src/build-cpu-avxvnni-local/bin/whisper-cli",
+            ".local/whispercpp/bin/whisper-cli",
+        ],
+        "gpu_cuda_sm120" if cfg!(windows) => &[
             ".local/whispercpp-src/build-cuda-sm120-local/bin/whisper-cli.exe",
             ".local/whispercpp/cuda-bin/Release/whisper-cli.exe",
+        ],
+        "gpu_cuda_sm120" => &[
+            ".local/whispercpp-src/build-cuda-sm120-local/bin/whisper-cli",
+            ".local/whispercpp/cuda-bin/bin/whisper-cli",
         ],
         _ => &[],
     }

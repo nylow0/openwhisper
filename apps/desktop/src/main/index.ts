@@ -14,7 +14,7 @@ import { createAppIcon } from './tray-icon.js';
 import {
   clearPathsManifestCache,
   debugNativeBinaryCandidates,
-  windowsMsvcTarget,
+  nativeTarget,
 } from './openwhisper-paths.js';
 import { loadJson, saveJson } from './store.js';
 import { SUPPORTED_ASR_LANGUAGES, type AppSettings, type AsrLanguageCode } from '../shared/types.js';
@@ -122,7 +122,6 @@ function loadSettings(): AppSettings {
 }
 
 function createMainWindow(): void {
-  // The app ships its own integrated title bar — no native menu chrome.
   Menu.setApplicationMenu(null);
 
   mainWindow = new BrowserWindow({
@@ -148,7 +147,6 @@ function createMainWindow(): void {
     },
   });
 
-  // OpenWhisper lives in the tray — closing the window just hides it.
   mainWindow.on('close', (event) => {
     if (isQuitting) return;
     event.preventDefault();
@@ -186,7 +184,6 @@ function createOverlayWindow(): void {
     },
   });
 
-  // Float above everything, and never intercept clicks — it is a HUD.
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setIgnoreMouseEvents(true);
 
@@ -199,12 +196,12 @@ function createOverlayWindow(): void {
 
 function createTray(): void {
   tray = new Tray(createAppIcon(32));
-  tray.setToolTip('OpenWhisper — hold Ctrl + Win to dictate');
+  tray.setToolTip('OpenWhisper — hold Ctrl + Super to dictate');
 
   const menu = Menu.buildFromTemplate([
     { label: 'Open OpenWhisper', click: () => showMainWindow() },
     { type: 'separator' },
-    { label: 'Hold Ctrl + Win to dictate', enabled: false },
+    { label: 'Hold Ctrl + Super to dictate', enabled: false },
     { type: 'separator' },
     {
       label: 'Quit OpenWhisper',
@@ -279,7 +276,6 @@ function findProjectRoot(): string {
   throw new Error('Could not find OpenWhisper project root from packaged app location');
 }
 
-/** Environment for the Rust helper and its selected ASR worker. */
 function packagedAssetPath(...parts: string[]): string {
   return path.join(process.resourcesPath, ...parts);
 }
@@ -301,18 +297,23 @@ type RustHelperLaunch =
 
 let cachedRustHelperLaunch: RustHelperLaunch | null = null;
 
+function platformExe(base: string): string {
+  return process.platform === 'win32' ? `${base}.exe` : base;
+}
+
 function whisperCppAssetEnv(assetsRoot: string): NodeJS.ProcessEnv {
+  const binary = platformExe('whisper-cli');
   return {
     OPENWHISPER_WHISPERCPP_CONFIG: path.join(assetsRoot, 'config', 'whispercpp-profiles.json'),
     OPENWHISPER_MODEL_DIR: path.join(assetsRoot, 'models'),
-    OPENWHISPER_WHISPERCPP_CPU_EXE: path.join(assetsRoot, 'whispercpp', 'cpu', 'whisper-cli.exe'),
-    OPENWHISPER_WHISPERCPP_GPU_EXE: path.join(assetsRoot, 'whispercpp', 'gpu', 'whisper-cli.exe'),
+    OPENWHISPER_WHISPERCPP_CPU_EXE: path.join(assetsRoot, 'whispercpp', 'cpu', binary),
+    OPENWHISPER_WHISPERCPP_GPU_EXE: path.join(assetsRoot, 'whispercpp', 'gpu', binary),
   };
 }
 
 function resolveRustHelperLaunch(): RustHelperLaunch {
   const workspaceRoot = findProjectRoot();
-  const packagedBinaryPath = packagedAssetPath('native', 'openwhisper-native.exe');
+  const packagedBinaryPath = packagedAssetPath('native', platformExe('openwhisper-native'));
   const packagedConfigPath = packagedAssetPath('config', 'whispercpp-profiles.json');
 
   if (app.isPackaged) {
@@ -387,10 +388,18 @@ function rustEnv(launch: RustHelperLaunch): NodeJS.ProcessEnv {
   };
 }
 
+function ipcAddress(pid: number): string {
+  if (process.platform === 'win32') {
+    return `\\\\.\\pipe\\OpenWhisper-${pid}`;
+  }
+  const runtimeDir = process.env.XDG_RUNTIME_DIR || '/tmp';
+  return path.join(runtimeDir, `openwhisper-${pid}.sock`);
+}
+
 function startRustHelper(): Promise<string> {
   return new Promise((resolve, reject) => {
     const electronPid = process.pid;
-    const pipeName = `\\\\.\\pipe\\OpenWhisper-${electronPid}`;
+    const pipeName = ipcAddress(electronPid);
     const launch = getRustHelperLaunch();
     const rustCwd = path.join(launch.workspaceRoot, 'crates', 'openwhisper-native');
     let settled = false;
@@ -414,7 +423,7 @@ function startRustHelper(): Promise<string> {
         [
           'run',
           '--target',
-          windowsMsvcTarget(launch.workspaceRoot),
+          nativeTarget(launch.workspaceRoot),
           '--',
           '--pipe-pid',
           String(electronPid),
@@ -457,7 +466,6 @@ function startRustHelper(): Promise<string> {
   });
 }
 
-/** Restarts the Rust helper and selected ASR worker so settings changes take effect. */
 async function restartEngine(): Promise<{ ok: boolean; error?: string }> {
   disconnectRust();
   rustProcess?.kill();
@@ -518,7 +526,6 @@ function bootstrap(): void {
     }
   });
 
-  // Tray application — keep running even when every window is closed.
   app.on('window-all-closed', () => {});
 
   app.on('before-quit', () => {
@@ -528,8 +535,6 @@ function bootstrap(): void {
   });
 }
 
-// Single-instance: a second launch focuses the existing window instead of
-// starting another tray icon.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {

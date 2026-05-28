@@ -88,7 +88,6 @@ mod tests {
     use hound::{SampleFormat, WavSpec, WavWriter};
 
     use super::analyze_audio_file;
-    use crate::transcript_quality::{should_discard_transcript, DecodeQuality};
     use crate::vad::VadConfig;
 
     fn write_test_wav(path: &PathBuf, samples: &[f32], sample_rate: u32) {
@@ -155,26 +154,6 @@ mod tests {
         write_test_wav(&path, &samples, 16_000);
         let speech = analyze_audio_file(&path, test_config()).unwrap();
         assert!(speech.passes_dictation_gate(test_config()));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn you_on_hum_wav_is_discarded_after_decode() {
-        let path = std::env::temp_dir().join(format!(
-            "openwhisper-asr-rs-speech-gate-you-{}.wav",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        write_test_wav(&path, &vec![0.02; 32_000], 16_000);
-        let speech = analyze_audio_file(&path, test_config()).unwrap();
-        let quality = DecodeQuality {
-            audio_duration_ms: 2_000,
-            content_token_count: 1,
-            avg_content_token_probability: Some(0.17),
-        };
-        assert!(should_discard_transcript("you", quality, speech));
         let _ = std::fs::remove_file(path);
     }
 }

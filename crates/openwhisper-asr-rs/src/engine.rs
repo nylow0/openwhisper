@@ -10,7 +10,6 @@ use serde_json::Value;
 use crate::buffering::WindowPolicy;
 use crate::protocol::WordResult;
 use crate::speech_gate::prepare_decode_audio;
-use crate::transcript_quality::{scrub_transcript, DecodeQuality};
 use crate::vad::VadConfig;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -491,22 +490,7 @@ impl AsrEngine for WhisperCppEngine {
         }
 
         let vad = self.vad_config();
-        let (decode_path, trimmed_temp, speech) = prepare_decode_audio(audio_path, vad)?;
-        if !speech.passes_dictation_gate(vad) {
-            if let Some(temp) = trimmed_temp {
-                let _ = std::fs::remove_file(temp);
-            }
-            log::info!(
-                "Skipping whisper.cpp decode: no speech detected (threshold={:.4} peak={:.4} floor={:.4} peak/floor={:.2} speech_ratio={:.2}) in {}",
-                speech.effective_threshold,
-                speech.peak_rms,
-                speech.noise_floor_rms,
-                speech.peak_to_noise_ratio(),
-                speech.speech_ratio(),
-                decode_path.display()
-            );
-            return Ok(empty_transcription());
-        }
+        let (decode_path, trimmed_temp, _speech) = prepare_decode_audio(audio_path, vad)?;
 
         if self.selection.is_none() {
             let model = std::env::var("OPENWHISPER_ASR_MODEL")
@@ -561,24 +545,8 @@ impl AsrEngine for WhisperCppEngine {
         })?;
         let _ = std::fs::remove_file(&json_path);
 
-        let audio_duration_ms = speech
-            .total_samples
-            .saturating_mul(1000)
-            .saturating_div(speech.sample_rate_hz.max(1) as usize) as u64;
-        let decode_quality = DecodeQuality::from_whisper_payload(&payload, audio_duration_ms);
-        let mut transcription = parse_whisper_cpp_payload(&payload, elapsed_ms)?;
+        let transcription = parse_whisper_cpp_payload(&payload, elapsed_ms)?;
         validate_transcription_language(&transcription.language, &self.language_config)?;
-        let raw_text = transcription.text.clone();
-        transcription.text = scrub_transcript(&transcription.text, decode_quality, speech);
-        if transcription.text.is_empty() && !raw_text.trim().is_empty() {
-            log::info!(
-                "Discarding whisper.cpp silence hallucination: {:?} (peak/floor={:.2}, avg_token_p={:?})",
-                raw_text,
-                speech.peak_to_noise_ratio(),
-                decode_quality.avg_content_token_probability
-            );
-            transcription.language = None;
-        }
         if let Some(temp) = trimmed_temp {
             let _ = std::fs::remove_file(temp);
         }
@@ -688,15 +656,6 @@ fn gpu_path_candidates() -> &'static [&'static str] {
         ".local/whispercpp-src/build-cuda-sm120-local/bin",
         ".local/whispercpp/cuda-bin/Release",
     ]
-}
-
-fn empty_transcription() -> Transcription {
-    Transcription {
-        text: String::new(),
-        words: Vec::new(),
-        language: None,
-        processing_latency_ms: 0,
-    }
 }
 
 pub fn parse_whisper_cpp_payload(

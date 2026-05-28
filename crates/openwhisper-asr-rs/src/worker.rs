@@ -446,9 +446,6 @@ mod tests {
     use serde_json::Value;
 
     use crate::engine::{AsrEngine, MockEngine, ModelLoadInfo, Transcription};
-    use crate::speech_gate::analyze_audio_file;
-    use crate::transcript_quality::{scrub_transcript, DecodeQuality};
-    use crate::vad::VadConfig;
 
     use crate::audio_capture::{write_debug_wav, WORKER_SAMPLE_RATE_HZ};
 
@@ -469,28 +466,6 @@ mod tests {
     struct StreamingFakeRecording {
         path: PathBuf,
         samples: Option<crate::audio_capture::AudioChunkReceiver>,
-    }
-
-    #[derive(Debug, Default)]
-    struct GatedMockEngine(MockEngine);
-
-    impl AsrEngine for GatedMockEngine {
-        fn load_model(&mut self, model: &str, device: &str) -> anyhow::Result<ModelLoadInfo> {
-            self.0.load_model(model, device)
-        }
-
-        fn transcribe_file(&mut self, audio_path: &Path) -> anyhow::Result<Transcription> {
-            let config = VadConfig::default();
-            if !analyze_audio_file(audio_path, config)?.passes_dictation_gate(config) {
-                return Ok(Transcription {
-                    text: String::new(),
-                    words: Vec::new(),
-                    language: None,
-                    processing_latency_ms: 0,
-                });
-            }
-            self.0.transcribe_file(audio_path)
-        }
     }
 
     #[derive(Debug)]
@@ -702,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn whisper_quality_scrub_is_applied_on_low_confidence_repetition() {
+    fn dictation_final_preserves_decoder_text_without_asr_filtering() {
         #[derive(Debug, Default)]
         struct YouEngine;
 
@@ -714,16 +689,9 @@ mod tests {
                 })
             }
 
-            fn transcribe_file(&mut self, audio_path: &Path) -> anyhow::Result<Transcription> {
-                let speech = crate::speech_gate::analyze_audio_file(audio_path, VadConfig::default())?;
-                let quality = DecodeQuality {
-                    audio_duration_ms: 30_000,
-                    content_token_count: 1,
-                    avg_content_token_probability: Some(0.17),
-                };
-                let text = scrub_transcript("you you you", quality, speech);
+            fn transcribe_file(&mut self, _audio_path: &Path) -> anyhow::Result<Transcription> {
                 Ok(Transcription {
-                    text,
+                    text: "you you you".to_string(),
                     words: Vec::new(),
                     language: None,
                     processing_latency_ms: 1_618,
@@ -744,12 +712,12 @@ mod tests {
         );
 
         assert_eq!(lines[1]["type"], "transcript.final");
-        assert_eq!(lines[1]["text"], "");
+        assert_eq!(lines[1]["text"], "you you you");
         assert!(!path.exists());
     }
 
     #[test]
-    fn dictation_stop_on_silent_recording_returns_empty_final_without_decoder_text() {
+    fn dictation_stop_on_silent_recording_still_returns_decoder_text() {
         let path = std::env::temp_dir().join(format!(
             "openwhisper-asr-rs-silent-gate-test-{}.wav",
             unix_timestamp_nanos()
@@ -758,11 +726,14 @@ mod tests {
         let lines = run_with_recording_path_and_engine(
             "{\"type\":\"dictation.start\"}\n{\"type\":\"dictation.stop\"}",
             path.clone(),
-            Box::new(GatedMockEngine(MockEngine::default())),
+            Box::new(MockEngine::default()),
         );
 
         assert_eq!(lines[1]["type"], "transcript.final");
-        assert_eq!(lines[1]["text"], "");
+        assert!(lines[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Mock transcript for openwhisper-asr-rs-silent-gate-test"));
         assert!(!path.exists());
     }
 

@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -8,9 +7,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::Serialize;
 
 pub const WORKER_SAMPLE_RATE_HZ: u32 = 16_000;
-const STREAM_CHUNK_QUEUE_CAPACITY: usize = 8;
 
-pub type AudioChunkReceiver = Receiver<Vec<f32>>;
 type WorkerWavWriter = hound::WavWriter<std::io::BufWriter<std::fs::File>>;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -57,7 +54,6 @@ pub struct RecordingSession {
     path: PathBuf,
     stream: cpal::Stream,
     writer: Arc<Mutex<Option<WorkerWavWriter>>>,
-    stream_samples: Option<AudioChunkReceiver>,
 }
 
 impl RecordingSession {
@@ -80,21 +76,9 @@ impl RecordingSession {
         }
         let _ = std::fs::remove_file(self.path);
     }
-
-    pub fn take_stream_samples(&mut self) -> Option<AudioChunkReceiver> {
-        self.stream_samples.take()
-    }
 }
 
 pub fn start_default_recording_session(path: PathBuf) -> Result<RecordingSession> {
-    start_recording_session(path, false)
-}
-
-pub fn start_default_streaming_recording_session(path: PathBuf) -> Result<RecordingSession> {
-    start_recording_session(path, true)
-}
-
-fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<RecordingSession> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -106,12 +90,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
     let channels = config.channels();
     let writer = Arc::new(Mutex::new(Some(create_worker_wav_writer(&path)?)));
     let captured_writer = Arc::clone(&writer);
-    let (stream_tx, stream_samples) = if stream_chunks {
-        let (tx, rx) = sync_channel(STREAM_CHUNK_QUEUE_CAPACITY);
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
-    };
     let error_callback = |error| log::error!("input stream error: {error}");
 
     let stream = match config.sample_format() {
@@ -120,7 +98,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
             move |data: &[f32], _| {
                 push_mono_samples(
                     &captured_writer,
-                    stream_tx.as_ref(),
                     data,
                     channels,
                     sample_rate_hz,
@@ -135,7 +112,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
             move |data: &[f64], _| {
                 push_mono_samples(
                     &captured_writer,
-                    stream_tx.as_ref(),
                     data,
                     channels,
                     sample_rate_hz,
@@ -150,7 +126,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
             move |data: &[i8], _| {
                 push_mono_samples(
                     &captured_writer,
-                    stream_tx.as_ref(),
                     data,
                     channels,
                     sample_rate_hz,
@@ -165,7 +140,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
             move |data: &[i16], _| {
                 push_mono_samples(
                     &captured_writer,
-                    stream_tx.as_ref(),
                     data,
                     channels,
                     sample_rate_hz,
@@ -180,7 +154,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
             move |data: &[i32], _| {
                 push_mono_samples(
                     &captured_writer,
-                    stream_tx.as_ref(),
                     data,
                     channels,
                     sample_rate_hz,
@@ -195,7 +168,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
             move |data: &[i64], _| {
                 push_mono_samples(
                     &captured_writer,
-                    stream_tx.as_ref(),
                     data,
                     channels,
                     sample_rate_hz,
@@ -210,7 +182,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
             move |data: &[u8], _| {
                 push_mono_samples(
                     &captured_writer,
-                    stream_tx.as_ref(),
                     data,
                     channels,
                     sample_rate_hz,
@@ -225,7 +196,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
             move |data: &[u16], _| {
                 push_mono_samples(
                     &captured_writer,
-                    stream_tx.as_ref(),
                     data,
                     channels,
                     sample_rate_hz,
@@ -240,7 +210,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
             move |data: &[u32], _| {
                 push_mono_samples(
                     &captured_writer,
-                    stream_tx.as_ref(),
                     data,
                     channels,
                     sample_rate_hz,
@@ -255,7 +224,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
             move |data: &[u64], _| {
                 push_mono_samples(
                     &captured_writer,
-                    stream_tx.as_ref(),
                     data,
                     channels,
                     sample_rate_hz,
@@ -275,7 +243,6 @@ fn start_recording_session(path: PathBuf, stream_chunks: bool) -> Result<Recordi
         path,
         stream,
         writer,
-        stream_samples,
     })
 }
 
@@ -354,7 +321,6 @@ fn write_wav_samples(writer: &mut WorkerWavWriter, samples: &[f32]) -> Result<()
 
 fn push_mono_samples<T>(
     writer: &Arc<Mutex<Option<WorkerWavWriter>>>,
-    stream_tx: Option<&SyncSender<Vec<f32>>>,
     data: &[T],
     channels: u16,
     source_rate_hz: u32,
@@ -378,15 +344,6 @@ fn push_mono_samples<T>(
         }
     }
     drop(writer);
-
-    if let Some(stream_tx) = stream_tx {
-        match stream_tx.try_send(worker_chunk) {
-            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
-            Err(TrySendError::Full(_)) => {
-                log::debug!("dropping ASR streaming audio chunk because decoder is behind");
-            }
-        }
-    }
 }
 
 fn f32_to_f32(sample: f32) -> f32 {

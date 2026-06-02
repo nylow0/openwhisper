@@ -7,9 +7,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::buffering::WindowPolicy;
 use crate::protocol::WordResult;
-use crate::vad::VadConfig;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Transcription {
@@ -22,14 +20,6 @@ pub struct Transcription {
 pub trait AsrEngine: Send {
     fn load_model(&mut self, model: &str, device: &str) -> Result<ModelLoadInfo>;
     fn transcribe_file(&mut self, audio_path: &Path) -> Result<Transcription>;
-
-    fn vad_config(&self) -> VadConfig {
-        VadConfig::default().with_env_overrides()
-    }
-
-    fn window_policy(&self) -> WindowPolicy {
-        WindowPolicy::dictation_default().with_env_overrides()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,8 +106,6 @@ struct WhisperCppSelection {
     model_path: PathBuf,
     args: Vec<String>,
     memory_mb: f64,
-    vad: VadConfig,
-    window: WindowPolicy,
 }
 
 pub(crate) fn env_value_is_truthy(value: &str) -> bool {
@@ -250,53 +238,11 @@ struct ProfileConfig {
     args: Vec<String>,
     #[serde(default)]
     benchmark: BenchmarkConfig,
-    #[serde(default)]
-    vad: ProfileVadConfig,
-    #[serde(default)]
-    streaming: ProfileStreamingConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct BenchmarkConfig {
     peak_ram_mb: Option<f64>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ProfileVadConfig {
-    rms_threshold: Option<f32>,
-    silence_ms: Option<u32>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ProfileStreamingConfig {
-    step_ms: Option<u32>,
-    length_ms: Option<u32>,
-    keep_ms: Option<u32>,
-}
-
-impl ProfileStreamingConfig {
-    fn into_window_policy(self) -> WindowPolicy {
-        let default = WindowPolicy::dictation_default();
-        WindowPolicy {
-            step_ms: self.step_ms.unwrap_or(default.step_ms),
-            length_ms: self.length_ms.unwrap_or(default.length_ms),
-            keep_ms: self.keep_ms.unwrap_or(default.keep_ms),
-            ..default
-        }
-        .with_env_overrides()
-    }
-}
-
-impl ProfileVadConfig {
-    fn into_vad_config(self) -> VadConfig {
-        let default = VadConfig::default();
-        VadConfig {
-            rms_threshold: self.rms_threshold.unwrap_or(default.rms_threshold),
-            silence_ms: self.silence_ms.unwrap_or(default.silence_ms),
-            ..default
-        }
-        .with_env_overrides()
-    }
 }
 
 impl Default for WhisperCppEngine {
@@ -473,8 +419,6 @@ impl AsrEngine for WhisperCppEngine {
             model_path,
             args: whisper_args,
             memory_mb,
-            vad: profile.vad.into_vad_config(),
-            window: profile.streaming.into_window_policy(),
         });
 
         Ok(ModelLoadInfo {
@@ -492,7 +436,7 @@ impl AsrEngine for WhisperCppEngine {
 
         if self.selection.is_none() {
             let model = std::env::var("OPENWHISPER_ASR_MODEL")
-                .unwrap_or_else(|_| "medium_en_q8".to_string());
+                .unwrap_or_else(|_| "large_v3_turbo_q8".to_string());
             let device =
                 std::env::var("OPENWHISPER_ASR_DEVICE").unwrap_or_else(|_| "auto".to_string());
             self.load_model(&model, &device)?;
@@ -546,22 +490,6 @@ impl AsrEngine for WhisperCppEngine {
         let transcription = parse_whisper_cpp_payload(&payload, elapsed_ms)?;
         validate_transcription_language(&transcription.language, &self.language_config)?;
         Ok(transcription)
-    }
-
-    fn vad_config(&self) -> VadConfig {
-        self.selection
-            .as_ref()
-            .map(|selection| selection.vad)
-            .unwrap_or_default()
-            .with_env_overrides()
-    }
-
-    fn window_policy(&self) -> WindowPolicy {
-        self.selection
-            .as_ref()
-            .map(|selection| selection.window)
-            .unwrap_or_else(WindowPolicy::dictation_default)
-            .with_env_overrides()
     }
 }
 
@@ -755,8 +683,7 @@ mod tests {
 
     use super::{
         parse_whisper_cpp_payload, read_asr_language_config, replace_whisper_language_arg,
-        resolve_whisper_language_flag, AsrEngine, AsrLanguageConfig, MockEngine, ProfileConfig,
-        WhisperCppEngine,
+        resolve_whisper_language_flag, AsrEngine, AsrLanguageConfig, MockEngine, WhisperCppEngine,
     };
 
     fn restore_env(name: &str, previous: Option<String>) {
@@ -835,34 +762,6 @@ mod tests {
         assert_eq!(result.text, " hello world ");
         assert_eq!(result.language.as_deref(), Some("en"));
         assert_eq!(result.processing_latency_ms, 123);
-    }
-
-    #[test]
-    fn whisper_cpp_profile_vad_values_drive_streaming_defaults() {
-        let profile: ProfileConfig = serde_json::from_value(json!({
-            "device": "cpu",
-            "binary_hint": "cpu_avx_vnni",
-            "model": "medium_en_q8",
-            "args": ["-l", "en"],
-            "vad": {
-                "rms_threshold": 0.04,
-                "silence_ms": 650
-            },
-            "streaming": {
-                "step_ms": 750,
-                "length_ms": 4000,
-                "keep_ms": 250
-            }
-        }))
-        .unwrap();
-        let vad = profile.vad.into_vad_config();
-        let window = profile.streaming.into_window_policy();
-
-        assert_eq!(vad.rms_threshold, 0.04);
-        assert_eq!(vad.silence_ms, 650);
-        assert_eq!(window.step_ms, 750);
-        assert_eq!(window.length_ms, 4_000);
-        assert_eq!(window.keep_ms, 250);
     }
 
     #[test]

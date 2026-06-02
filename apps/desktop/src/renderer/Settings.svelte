@@ -18,8 +18,8 @@
   );
 
   const MODELS: Array<{ id: AsrModel; name: string; detail: string }> = [
-    { id: 'medium_en_q8', name: 'English only', detail: 'Best for English dictation' },
-    { id: 'large_v3_turbo_q8', name: 'Multilingual', detail: 'Multilingual support, higher memory usage' },
+    { id: 'large_v3_turbo_q8', name: 'Multilingual', detail: 'Recommended for accuracy and GPU speed' },
+    { id: 'medium_en_q8', name: 'English only', detail: 'Smaller fallback for English dictation' },
   ];
   const DEVICES: Array<{ id: AsrDevice; name: string }> = [
     { id: 'auto', name: 'Auto' },

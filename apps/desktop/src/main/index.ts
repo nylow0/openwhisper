@@ -24,9 +24,9 @@ const __dirname = path.dirname(__filename);
 
 const SETTINGS_FILE = 'settings.json';
 const DEFAULT_SETTINGS: AppSettings = {
-  model: 'medium_en_q8',
+  model: 'large_v3_turbo_q8',
   device: 'auto',
-  spokenLanguages: ['en'],
+  spokenLanguages: ['en', 'uk'],
   autoDetectLanguage: false,
   launchAtLogin: false,
   showWindowOnLaunch: true,

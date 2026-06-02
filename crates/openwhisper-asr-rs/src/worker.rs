@@ -8,13 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 
-use crate::audio_capture::{
-    list_input_devices, start_default_recording_session, start_default_streaming_recording_session,
-    AudioChunkReceiver, RecordingSession,
-};
+use crate::audio_capture::{list_input_devices, start_default_recording_session, RecordingSession};
 use crate::engine::{AsrEngine, WhisperCppEngine};
 use crate::protocol::{protocol_error, WorkerCommand, WorkerEvent};
-use crate::streaming::StreamingSession;
 
 pub fn run_stdio() -> anyhow::Result<()> {
     log::info!("openwhisper-asr-rs worker started");
@@ -52,7 +48,6 @@ where
     let mut state = WorkerState::new(recorder_factory, engine);
 
     for line in reader.lines() {
-        write_events(&mut writer, state.drain_stream_events())?;
         let line = line?;
         if line.trim().is_empty() {
             continue;
@@ -70,8 +65,6 @@ where
         for event in events {
             write_event(&mut writer, &event)?;
         }
-        write_events(&mut writer, state.drain_stream_events())?;
-
         if should_stop {
             break;
         }
@@ -93,8 +86,6 @@ where
     let mut state = WorkerState::new(recorder_factory, engine);
 
     loop {
-        write_events(&mut writer, state.drain_stream_events())?;
-
         match lines.recv_timeout(Duration::from_millis(50)) {
             Ok(Ok(line)) => {
                 if line.trim().is_empty() {
@@ -126,9 +117,6 @@ where
 trait ActiveRecording {
     fn stop(self: Box<Self>) -> Result<PathBuf>;
     fn cancel(self: Box<Self>);
-    fn take_stream_samples(&mut self) -> Option<AudioChunkReceiver> {
-        None
-    }
 }
 
 impl ActiveRecording for RecordingSession {
@@ -140,9 +128,6 @@ impl ActiveRecording for RecordingSession {
         RecordingSession::cancel(*self);
     }
 
-    fn take_stream_samples(&mut self) -> Option<AudioChunkReceiver> {
-        RecordingSession::take_stream_samples(self)
-    }
 }
 
 struct WorkerState<F>
@@ -153,8 +138,6 @@ where
     is_model_loaded: bool,
     recording: Option<Box<dyn ActiveRecording>>,
     recorder_factory: F,
-    stream_tail_finalized: bool,
-    streaming: Option<StreamingSession>,
 }
 
 impl<F> WorkerState<F>
@@ -167,8 +150,6 @@ where
             is_model_loaded: false,
             recording: None,
             recorder_factory,
-            stream_tail_finalized: false,
-            streaming: None,
         }
     }
 
@@ -203,14 +184,14 @@ where
     }
 
     fn load_model(&mut self, model: Option<String>, device: Option<String>) -> WorkerEvent {
-        let default_model =
-            std::env::var("OPENWHISPER_ASR_MODEL").unwrap_or_else(|_| "medium_en_q8".to_string());
+        let default_model = std::env::var("OPENWHISPER_ASR_MODEL")
+            .unwrap_or_else(|_| "large_v3_turbo_q8".to_string());
         let default_device =
             std::env::var("OPENWHISPER_ASR_DEVICE").unwrap_or_else(|_| "auto".to_string());
         let Some(engine) = self.engine.as_mut() else {
             return WorkerEvent::Error {
                 code: Some("DICTATION_RUNNING".to_string()),
-                message: "Cannot load a model while streaming dictation".to_string(),
+                message: "Cannot load a model while dictation is running".to_string(),
                 recoverable: true,
             };
         };
@@ -255,17 +236,7 @@ where
         }
 
         match (self.recorder_factory)() {
-            Ok(mut recording) => {
-                if let Some(samples) = recording.take_stream_samples() {
-                    let engine = self
-                        .engine
-                        .take()
-                        .expect("ASR engine must be idle when dictation starts");
-                    self.streaming = Some(StreamingSession::spawn(engine, samples));
-                    self.stream_tail_finalized = false;
-                }
-                self.recording = Some(recording);
-            }
+            Ok(recording) => self.recording = Some(recording),
             Err(error) => events.push(WorkerEvent::AudioError {
                 error: error.to_string(),
                 code: "AUDIO_RECORDING_FAILED".to_string(),
@@ -300,18 +271,14 @@ where
 
         if wav_frames.unwrap_or(0) < 1_600 {
             let _ = std::fs::remove_file(&recording_path);
-            let _ = self.stop_streaming();
             return vec![WorkerEvent::AudioError {
                 error: "Recording produced no audio frames".to_string(),
                 code: "AUDIO_RECORDING_FAILED".to_string(),
             }];
         }
 
-        let mut events = self.stop_streaming();
-        // Always transcribe the full recording on stop; streaming partials are not authoritative.
-        events.retain(|event| !matches!(event, WorkerEvent::TranscriptFinal { .. }));
+        let mut events = Vec::new();
         events.push(self.transcribe_file(&recording_path));
-        self.stream_tail_finalized = false;
         let _ = std::fs::remove_file(recording_path);
         events
     }
@@ -320,7 +287,7 @@ where
         let Some(engine) = self.engine.as_mut() else {
             return WorkerEvent::Error {
                 code: Some("DICTATION_RUNNING".to_string()),
-                message: "Cannot transcribe a file while streaming dictation".to_string(),
+                message: "Cannot transcribe a file while dictation is running".to_string(),
                 recoverable: true,
             };
         };
@@ -342,39 +309,6 @@ where
         if let Some(recording) = self.recording.take() {
             recording.cancel();
         }
-        let _ = self.stop_streaming();
-    }
-
-    fn drain_stream_events(&mut self) -> Vec<WorkerEvent> {
-        let mut events = Vec::new();
-        if let Some(streaming) = &self.streaming {
-            while let Some(event) = streaming.try_recv_event() {
-                match &event {
-                    WorkerEvent::TranscriptFinal { .. } => self.stream_tail_finalized = true,
-                    WorkerEvent::TranscriptPartial { .. } => self.stream_tail_finalized = false,
-                    _ => {}
-                }
-                events.push(event);
-            }
-        }
-        events
-    }
-
-    fn stop_streaming(&mut self) -> Vec<WorkerEvent> {
-        let mut events = self.drain_stream_events();
-        if let Some(streaming) = self.streaming.take() {
-            match streaming.stop() {
-                Ok(engine) => self.engine = Some(engine),
-                Err(error) => {
-                    self.engine = Some(worker_engine());
-                    events.push(WorkerEvent::TranscriptError {
-                        error: error.to_string(),
-                        chunk_timestamp: unix_secs(),
-                    });
-                }
-            }
-        }
-        events
     }
 }
 
@@ -401,19 +335,8 @@ fn unix_secs() -> u64 {
 
 fn default_recorder_factory() -> Result<Box<dyn ActiveRecording>> {
     let path = default_recording_path();
-    // Match Python worker: record the full session, transcribe once on stop (no streaming decode).
-    let session = if streaming_dictation_enabled() {
-        start_default_streaming_recording_session(path)?
-    } else {
-        start_default_recording_session(path)?
-    };
+    let session = start_default_recording_session(path)?;
     Ok(Box::new(session))
-}
-
-fn streaming_dictation_enabled() -> bool {
-    std::env::var("OPENWHISPER_ASR_STREAMING")
-        .map(|value| crate::engine::env_value_is_truthy(&value))
-        .unwrap_or(false)
 }
 
 fn worker_engine() -> Box<dyn AsrEngine> {
@@ -439,9 +362,6 @@ fn unix_timestamp_nanos() -> u128 {
 mod tests {
     use std::io::{BufReader, Cursor};
     use std::path::{Path, PathBuf};
-    use std::sync::mpsc::{channel, sync_channel};
-    use std::thread;
-    use std::time::Duration;
 
     use serde_json::Value;
 
@@ -449,9 +369,7 @@ mod tests {
 
     use crate::audio_capture::{write_debug_wav, WORKER_SAMPLE_RATE_HZ};
 
-    use super::{
-        run_live_worker, run_worker_with_dependencies, unix_timestamp_nanos, ActiveRecording,
-    };
+    use super::{run_worker_with_dependencies, unix_timestamp_nanos, ActiveRecording};
 
     const V1_COMMANDS: &str = include_str!("../test_data/protocol/v1_commands.ndjson");
 
@@ -461,11 +379,6 @@ mod tests {
 
     struct FakeRecording {
         path: PathBuf,
-    }
-
-    struct StreamingFakeRecording {
-        path: PathBuf,
-        samples: Option<crate::audio_capture::AudioChunkReceiver>,
     }
 
     #[derive(Debug)]
@@ -478,19 +391,6 @@ mod tests {
         }
 
         fn cancel(self: Box<Self>) {}
-    }
-
-    impl ActiveRecording for StreamingFakeRecording {
-        fn stop(self: Box<Self>) -> anyhow::Result<PathBuf> {
-            write_fake_recording_wav(&self.path)?;
-            Ok(self.path)
-        }
-
-        fn cancel(self: Box<Self>) {}
-
-        fn take_stream_samples(&mut self) -> Option<crate::audio_capture::AudioChunkReceiver> {
-            self.samples.take()
-        }
     }
 
     impl AsrEngine for FailingEngine {
@@ -561,119 +461,6 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Mock transcript for openwhisper-asr-rs-test"));
-    }
-
-    #[test]
-    fn live_worker_flushes_partial_before_stop_so_desktop_can_show_streaming_text() {
-        std::env::set_var("OPENWHISPER_ASR_STREAMING", "1");
-        let path = std::env::temp_dir().join(format!(
-            "openwhisper-asr-rs-streaming-test-{}.wav",
-            unix_timestamp_nanos()
-        ));
-        let (sample_tx, sample_rx) = sync_channel(1);
-        sample_tx.send(vec![0.2; 8_000]).unwrap();
-        let (line_tx, line_rx) = channel();
-        let feeder = thread::spawn(move || {
-            line_tx
-                .send(Ok("{\"type\":\"dictation.start\"}".to_string()))
-                .unwrap();
-            thread::sleep(Duration::from_millis(250));
-            line_tx
-                .send(Ok("{\"type\":\"dictation.stop\"}".to_string()))
-                .unwrap();
-            line_tx
-                .send(Ok("{\"type\":\"shutdown\"}".to_string()))
-                .unwrap();
-        });
-        let mut output = Vec::new();
-        let mut samples = Some(sample_rx);
-
-        run_live_worker(
-            line_rx,
-            &mut output,
-            || {
-                Ok(Box::new(StreamingFakeRecording {
-                    path: path.clone(),
-                    samples: samples.take(),
-                }))
-            },
-            Box::new(crate::engine::MockEngine::default()),
-        )
-        .unwrap();
-        feeder.join().unwrap();
-        let event_types = String::from_utf8(output)
-            .unwrap()
-            .lines()
-            .map(|line| {
-                serde_json::from_str::<Value>(line).unwrap()["type"]
-                    .as_str()
-                    .unwrap()
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            event_types,
-            vec!["model.loaded", "transcript.partial", "transcript.final"]
-        );
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn stop_skips_duplicate_final_after_silence_already_finalized_stream_tail() {
-        std::env::set_var("OPENWHISPER_ASR_STREAMING", "1");
-        let path = std::env::temp_dir().join(format!(
-            "openwhisper-asr-rs-silence-final-test-{}.wav",
-            unix_timestamp_nanos()
-        ));
-        let (sample_tx, sample_rx) = sync_channel(2);
-        sample_tx.send(vec![0.2; 8_000]).unwrap();
-        sample_tx.send(vec![0.0; 16_000]).unwrap();
-        let (line_tx, line_rx) = channel();
-        let feeder = thread::spawn(move || {
-            line_tx
-                .send(Ok("{\"type\":\"dictation.start\"}".to_string()))
-                .unwrap();
-            thread::sleep(Duration::from_millis(250));
-            line_tx
-                .send(Ok("{\"type\":\"dictation.stop\"}".to_string()))
-                .unwrap();
-            line_tx
-                .send(Ok("{\"type\":\"shutdown\"}".to_string()))
-                .unwrap();
-        });
-        let mut output = Vec::new();
-        let mut samples = Some(sample_rx);
-
-        run_live_worker(
-            line_rx,
-            &mut output,
-            || {
-                Ok(Box::new(StreamingFakeRecording {
-                    path: path.clone(),
-                    samples: samples.take(),
-                }))
-            },
-            Box::new(crate::engine::MockEngine::default()),
-        )
-        .unwrap();
-        feeder.join().unwrap();
-        let event_types = String::from_utf8(output)
-            .unwrap()
-            .lines()
-            .map(|line| {
-                serde_json::from_str::<Value>(line).unwrap()["type"]
-                    .as_str()
-                    .unwrap()
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            event_types,
-            vec!["model.loaded", "transcript.partial", "transcript.final"]
-        );
-        assert!(!path.exists());
     }
 
     #[test]

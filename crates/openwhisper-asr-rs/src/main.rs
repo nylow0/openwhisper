@@ -1,10 +1,7 @@
 mod audio_capture;
-mod buffering;
 mod engine;
 mod performance;
 mod protocol;
-mod streaming;
-mod vad;
 mod worker;
 
 use std::path::{Path, PathBuf};
@@ -136,7 +133,7 @@ fn parse_audio_engine_args(
         .get(1)
         .map(PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("{command_name} requires an input audio path"))?;
-    let mut model = "medium_en_q8".to_string();
+    let mut model = "large_v3_turbo_q8".to_string();
     let mut device = "auto".to_string();
     let mut languages = "en".to_string();
     let mut auto_detect_language = false;
@@ -286,6 +283,27 @@ mod tests {
                 assert_eq!(path, PathBuf::from("sample.wav"));
                 assert_eq!(model, "turbo");
                 assert_eq!(device, "cpu");
+                assert_eq!(languages, "en");
+                assert!(!auto_detect_language);
+            }
+            _ => panic!("expected transcribe command"),
+        }
+    }
+
+    #[test]
+    fn transcribe_command_defaults_to_multilingual_turbo() {
+        let command = parse_args(vec!["transcribe".to_string(), "sample.wav".to_string()]).unwrap();
+
+        match command {
+            Command::Transcribe {
+                model,
+                device,
+                languages,
+                auto_detect_language,
+                ..
+            } => {
+                assert_eq!(model, "large_v3_turbo_q8");
+                assert_eq!(device, "auto");
                 assert_eq!(languages, "en");
                 assert!(!auto_detect_language);
             }

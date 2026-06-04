@@ -1,3 +1,7 @@
+if (import.meta.env.DEV && new URLSearchParams(location.search).has('demo')) {
+  await import('./demo-mock');
+}
+
 import Overlay from './Overlay.svelte';
 import './overlay.css';
 

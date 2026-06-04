@@ -1,3 +1,7 @@
+if (import.meta.env.DEV && new URLSearchParams(location.search).has('demo')) {
+  await import('./demo-mock');
+}
+
 import App from './App.svelte';
 import './app.css';
 

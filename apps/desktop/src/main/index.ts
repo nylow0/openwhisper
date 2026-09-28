@@ -373,6 +373,7 @@ function rustEnv(launch: RustHelperLaunch): NodeJS.ProcessEnv {
     OPENWHISPER_ASR_DEVICE: normalizeDevice(settings.device),
     OPENWHISPER_ASR_LANGUAGES: settings.spokenLanguages.join(','),
     OPENWHISPER_ASR_AUTO_DETECT_LANGUAGE: settings.autoDetectLanguage ? '1' : '0',
+    OPENWHISPER_RECORDINGS_DIR: path.join(app.getPath('userData'), 'recordings'),
   };
 
   if (launch.usePackagedAssets) {

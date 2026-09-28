@@ -1,5 +1,7 @@
-import { BrowserWindow, ipcMain, screen, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, type IpcMainInvokeEvent } from 'electron';
+import * as fs from 'fs';
 import * as net from 'net';
+import * as path from 'path';
 import { EventEmitter } from 'events';
 import type {
   Event,
@@ -194,6 +196,20 @@ const HISTORY_FILE = 'history.json';
 const HISTORY_LIMIT = 500;
 let history: HistoryItem[] = [];
 
+function removeRecording(audioPath: string | undefined): void {
+  if (!audioPath) return;
+  const recordingsDir = path.resolve(app.getPath('userData'), 'recordings');
+  const relative = path.relative(recordingsDir, path.resolve(audioPath));
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return;
+  try {
+    fs.unlinkSync(audioPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn('Could not remove recording', error);
+    }
+  }
+}
+
 /** Appends a finished transcript to the persisted history and notifies the UI. */
 function recordTranscript(event: TranscriptFinalEvent): void {
   const text = event.text.trim();
@@ -203,9 +219,14 @@ function recordTranscript(event: TranscriptFinalEvent): void {
     text,
     language: event.language ?? null,
     latencyMs: event.processingLatencyMs ?? null,
+    words: event.words,
+    speechSegments: event.speechSegments,
+    audioPath: event.audioPath,
     createdAt: Date.now(),
   };
-  history = [item, ...history].slice(0, HISTORY_LIMIT);
+  const nextHistory = [item, ...history];
+  nextHistory.slice(HISTORY_LIMIT).forEach((oldItem) => removeRecording(oldItem.audioPath));
+  history = nextHistory.slice(0, HISTORY_LIMIT);
   saveJson(HISTORY_FILE, history);
   broadcast('history:changed', history);
 }
@@ -286,12 +307,14 @@ export function setupIpcHandlers(): void {
   ipcMain.handle('history:get', () => history);
 
   ipcMain.handle('history:clear', () => {
+    history.forEach((item) => removeRecording(item.audioPath));
     history = [];
     saveJson(HISTORY_FILE, history);
     broadcast('history:changed', history);
   });
 
   ipcMain.handle('history:delete', (_event: IpcMainInvokeEvent, id: string) => {
+    history.filter((item) => item.id === id).forEach((item) => removeRecording(item.audioPath));
     history = history.filter((item) => item.id !== id);
     saveJson(HISTORY_FILE, history);
     broadcast('history:changed', history);

@@ -28,6 +28,7 @@ test-pipe.js
 run-test.ps1
 temp-test-*.json
 .plan/
+.tmp/asr-hard-eval/
 
 # Local machine state
 .DS_Store

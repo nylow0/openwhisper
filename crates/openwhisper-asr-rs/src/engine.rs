@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+use std::io::Read;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Instant;
+use std::process::{Child, Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -15,6 +18,13 @@ pub struct Transcription {
     pub words: Vec<WordResult>,
     pub language: Option<String>,
     pub processing_latency_ms: u32,
+    pub speech_segments: Vec<SpeechSegment>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct SpeechSegment {
+    pub start_ms: u32,
+    pub end_ms: u32,
 }
 
 pub trait AsrEngine: Send {
@@ -64,6 +74,7 @@ impl AsrEngine for MockEngine {
             text,
             language: Some("en".to_string()),
             processing_latency_ms: 1,
+            speech_segments: Vec::new(),
         })
     }
 }
@@ -91,6 +102,21 @@ pub struct WhisperCppEngine {
     config_path: PathBuf,
     selection: Option<WhisperCppSelection>,
     language_config: AsrLanguageConfig,
+    server: Option<WhisperServer>,
+    server_failed: bool,
+}
+
+#[derive(Debug)]
+struct WhisperServer {
+    child: Child,
+    port: u16,
+}
+
+impl Drop for WhisperServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,6 +277,8 @@ impl Default for WhisperCppEngine {
             config_path: default_config_path(),
             selection: None,
             language_config: read_asr_language_config(),
+            server: None,
+            server_failed: false,
         }
     }
 }
@@ -262,6 +290,8 @@ impl WhisperCppEngine {
             config_path,
             selection: None,
             language_config: read_asr_language_config(),
+            server: None,
+            server_failed: false,
         }
     }
 
@@ -405,13 +435,15 @@ impl WhisperCppEngine {
 impl AsrEngine for WhisperCppEngine {
     fn load_model(&mut self, model: &str, device: &str) -> Result<ModelLoadInfo> {
         let config = self.load_config()?;
+        let model_path = self.resolve_model_path(&config, normalize_model_key(model)?)?;
         let (_profile_name, profile, exe_path) = self.select_profile(&config, model, device)?;
-        let model_path = self.resolve_model_path(&config, &profile.model)?;
         let memory_mb = profile.benchmark.peak_ram_mb.unwrap_or(0.0);
         let language_config = read_asr_language_config();
         let language_flag = resolve_whisper_language_flag(&language_config);
         let whisper_args = replace_whisper_language_arg(&profile.args, language_flag);
         self.language_config = language_config;
+        self.server = None;
+        self.server_failed = false;
 
         self.selection = Some(WhisperCppSelection {
             device: profile.device.clone(),
@@ -444,7 +476,8 @@ impl AsrEngine for WhisperCppEngine {
         let selection = self
             .selection
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("whisper.cpp engine was not loaded"))?;
+            .ok_or_else(|| anyhow::anyhow!("whisper.cpp engine was not loaded"))?
+            .clone();
         let output_base = std::env::temp_dir().join(format!(
             "openwhisper-asr-rs-transcript-{}-{}",
             std::process::id(),
@@ -459,38 +492,99 @@ impl AsrEngine for WhisperCppEngine {
 
         let start = Instant::now();
         let asr_root = whisper_tooling_root(self.config_path.parent().unwrap_or(Path::new(".")));
-        let completed = run_whisper_cpp(selection, &decode_path, &output_base, &asr_root)?;
-        let elapsed_ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
-
-        if !completed.status.success() {
-            anyhow::bail!(
-                "whisper.cpp failed with exit code {:?}: {}",
-                completed.status.code(),
-                tail(&String::from_utf8_lossy(&completed.stderr))
-            );
+        let speech_segments = run_speech_vad(&selection, &decode_path, &asr_root)
+            .inspect_err(|error| log::warn!("speech VAD failed, decoding full audio: {error}"))
+            .ok()
+            .flatten();
+        if matches!(speech_segments.as_ref(), Some(segments) if segments.is_empty()) {
+            return Ok(Transcription {
+                text: String::new(),
+                words: Vec::new(),
+                language: None,
+                processing_latency_ms: elapsed_ms(start),
+                speech_segments: Vec::new(),
+            });
         }
 
-        let json_path = output_base.with_extension("json");
-        let file = std::fs::File::open(&json_path).with_context(|| {
-            format!(
-                "whisper.cpp did not create JSON output at {}. stdout/stderr tail: {}",
-                json_path.display(),
-                tail(&format!(
-                    "{}\n{}",
-                    String::from_utf8_lossy(&completed.stdout),
-                    String::from_utf8_lossy(&completed.stderr)
-                ))
-            )
-        })?;
-        let payload: Value = serde_json::from_reader(file).with_context(|| {
-            format!("failed to parse whisper.cpp output {}", json_path.display())
-        })?;
-        let _ = std::fs::remove_file(&json_path);
+        let use_server = !self.language_config.auto_detect_language
+            && self.language_config.spoken_languages.iter().all(|lang| lang == "en" || lang == "uk");
+        let payload = if use_server && !self.server_failed {
+            if self.server.is_none() {
+                let server_exe = selection.exe_path.with_file_name(server_binary_name());
+                if server_exe.is_file() {
+                    match start_whisper_server(&selection, &server_exe, &asr_root) {
+                        Ok(server) => self.server = Some(server),
+                        Err(error) => {
+                            log::warn!("persistent whisper.cpp server unavailable: {error}");
+                            self.server_failed = true;
+                        }
+                    }
+                }
+            }
+            if let Some(server) = self.server.as_ref() {
+                match run_whisper_server(server, &decode_path, &self.language_config) {
+                    Ok(payload) => Some(payload),
+                    Err(error) => {
+                        log::warn!("persistent whisper.cpp request failed, using CLI: {error}");
+                        self.server = None;
+                        self.server_failed = true;
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
-        let transcription = parse_whisper_cpp_payload(&payload, elapsed_ms)?;
+        let mut transcription = match payload {
+            Some(payload) => match parse_whisper_server_payload(&payload, elapsed_ms(start)) {
+                Ok(transcription) => transcription,
+                Err(error) => {
+                    log::warn!("persistent whisper.cpp response was invalid, using CLI: {error}");
+                    self.server = None;
+                    self.server_failed = true;
+                    let payload = run_whisper_cpp_json(&selection, &decode_path, &output_base, &asr_root)?;
+                    parse_whisper_cpp_payload(&payload, elapsed_ms(start))?
+                }
+            },
+            None => {
+                let payload = run_whisper_cpp_json(&selection, &decode_path, &output_base, &asr_root)?;
+                parse_whisper_cpp_payload(&payload, elapsed_ms(start))?
+            }
+        };
+        if self.server.is_some() && self.language_config.spoken_languages.len() == 1 {
+            transcription.language = Some(self.language_config.spoken_languages[0].clone());
+        }
+        transcription.speech_segments = speech_segments.unwrap_or_default();
         validate_transcription_language(&transcription.language, &self.language_config)?;
         Ok(transcription)
     }
+}
+
+fn run_whisper_cpp_json(
+    selection: &WhisperCppSelection,
+    audio_path: &Path,
+    output_base: &Path,
+    asr_root: &Path,
+) -> Result<Value> {
+    let completed = run_whisper_cpp(selection, audio_path, output_base, asr_root)?;
+    if !completed.status.success() {
+        anyhow::bail!(
+            "whisper.cpp failed with exit code {:?}: {}",
+            completed.status.code(),
+            tail(&String::from_utf8_lossy(&completed.stderr))
+        );
+    }
+    let json_path = output_base.with_extension("json");
+    let file = std::fs::File::open(&json_path).with_context(|| {
+        format!("whisper.cpp did not create JSON output at {}", json_path.display())
+    })?;
+    let payload = serde_json::from_reader(file)
+        .with_context(|| format!("failed to parse whisper.cpp output {}", json_path.display()))?;
+    let _ = std::fs::remove_file(json_path);
+    Ok(payload)
 }
 
 fn run_whisper_cpp(
@@ -523,6 +617,152 @@ fn run_whisper_cpp(
     command
         .output()
         .with_context(|| format!("failed to run {}", selection.exe_path.display()))
+}
+
+fn server_binary_name() -> &'static str {
+    if cfg!(windows) { "whisper-server.exe" } else { "whisper-server" }
+}
+
+fn vad_binary_name() -> &'static str {
+    if cfg!(windows) { "whisper-vad-speech-segments.exe" } else { "whisper-vad-speech-segments" }
+}
+
+fn profile_arg<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
+    args.windows(2)
+        .find(|pair| pair[0] == name)
+        .map(|pair| pair[1].as_str())
+}
+
+fn start_whisper_server(
+    selection: &WhisperCppSelection,
+    exe_path: &Path,
+    asr_root: &Path,
+) -> Result<WhisperServer> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+
+    let mut command = Command::new(exe_path);
+    command
+        .current_dir(whisper_cpp_working_dir(exe_path, asr_root))
+        .arg("-m").arg(&selection.model_path)
+        .arg("--host").arg("127.0.0.1")
+        .arg("--port").arg(port.to_string())
+        .arg("-l").arg(profile_arg(&selection.args, "-l").unwrap_or("auto"))
+        .arg("-nlp")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    for flag in ["-t", "-ac"] {
+        if let Some(value) = profile_arg(&selection.args, flag) {
+            command.arg(flag).arg(value);
+        }
+    }
+    for (key, value) in whisper_cpp_subprocess_env(selection, asr_root) {
+        command.env(key, value);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let child = command.spawn().with_context(|| format!("failed to start {}", exe_path.display()))?;
+    let mut server = WhisperServer { child, port };
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
+            return Ok(server);
+        }
+        if let Some(status) = server.child.try_wait()? {
+            anyhow::bail!("whisper-server exited during startup: {status}");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    anyhow::bail!("whisper-server did not listen on 127.0.0.1:{port} within 20 seconds")
+}
+
+fn run_whisper_server(
+    server: &WhisperServer,
+    audio_path: &Path,
+    language_config: &AsrLanguageConfig,
+) -> Result<Value> {
+    let boundary = format!("openwhisper-{}", unix_timestamp_nanos());
+    let mut body = Vec::new();
+    body.extend_from_slice(format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
+    ).as_bytes());
+    std::fs::File::open(audio_path)?.read_to_end(&mut body)?;
+    body.extend_from_slice(b"\r\n");
+    for (name, value) in [
+        ("response_format", "verbose_json"),
+        ("language", resolve_whisper_language_flag(language_config)),
+    ] {
+        body.extend_from_slice(format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+        ).as_bytes());
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+
+    let response = ureq::post(&format!("http://127.0.0.1:{}/inference", server.port))
+        .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+        .timeout(Duration::from_secs(600))
+        .send_bytes(&body)
+        .context("whisper-server inference request failed")?;
+    let payload = response.into_string()?;
+    serde_json::from_str(&payload).context("whisper-server returned invalid JSON")
+}
+
+fn run_speech_vad(
+    selection: &WhisperCppSelection,
+    audio_path: &Path,
+    asr_root: &Path,
+) -> Result<Option<Vec<SpeechSegment>>> {
+    let exe_path = selection.exe_path.with_file_name(vad_binary_name());
+    let model_path = selection.model_path.with_file_name("ggml-silero-v6.2.0.bin");
+    if !exe_path.is_file() || !model_path.is_file() {
+        return Ok(None);
+    }
+    let mut command = Command::new(&exe_path);
+    command
+        .current_dir(whisper_cpp_working_dir(&exe_path, asr_root))
+        .arg("-vm").arg(model_path)
+        .arg("-f").arg(audio_path)
+        .arg("-np")
+        .arg("-vsd").arg("600")
+        .arg("-vp").arg("150");
+    for (key, value) in whisper_cpp_subprocess_env(selection, asr_root) {
+        command.env(key, value);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let output = command.output()?;
+    if !output.status.success() {
+        anyhow::bail!("speech VAD failed: {}", tail(&String::from_utf8_lossy(&output.stderr)));
+    }
+    Ok(Some(parse_vad_segments(&String::from_utf8_lossy(&output.stdout))?))
+}
+
+fn parse_vad_segments(output: &str) -> Result<Vec<SpeechSegment>> {
+    let count = output.lines().find_map(|line| {
+        line.trim().strip_prefix("Detected ")?.split_once(" speech segments:")?.0.parse::<usize>().ok()
+    }).ok_or_else(|| anyhow::anyhow!("speech VAD did not report a segment count"))?;
+    let segments = output.lines().filter_map(|line| {
+        let (_, times) = line.trim().strip_prefix("Speech segment ")?.split_once(": start = ")?;
+        let (start, end) = times.split_once(", end = ")?;
+        // whisper.cpp's VAD example prints centiseconds, not seconds.
+        let start_ms = (start.parse::<f64>().ok()? * 10.0).round() as u32;
+        let end_ms = (end.parse::<f64>().ok()? * 10.0).round() as u32;
+        (end_ms >= start_ms).then_some(SpeechSegment { start_ms, end_ms })
+    }).collect::<Vec<_>>();
+    anyhow::ensure!(segments.len() == count, "speech VAD segment count mismatch");
+    Ok(segments)
+}
+
+fn elapsed_ms(start: Instant) -> u32 {
+    start.elapsed().as_millis().min(u32::MAX as u128) as u32
 }
 
 fn whisper_cpp_working_dir(exe_path: &Path, fallback: &Path) -> PathBuf {
@@ -598,13 +838,82 @@ pub fn parse_whisper_cpp_payload(
         .iter()
         .filter_map(|item| item.get("text").and_then(Value::as_str))
         .collect::<String>();
+    let words = transcription
+        .iter()
+        .filter_map(|segment| segment.get("tokens").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|token| {
+            let text = token.get("text")?.as_str()?;
+            if text.is_empty() || (text.starts_with("[_") && text.ends_with("]")) {
+                return None;
+            }
+            let offsets = token.get("offsets")?;
+            let start_ms = u32::try_from(offsets.get("from")?.as_u64()?).ok()?;
+            let end_ms = u32::try_from(offsets.get("to")?.as_u64()?).ok()?;
+            if end_ms < start_ms {
+                return None;
+            }
+            let confidence = token
+                .get("p")
+                .and_then(Value::as_f64)
+                .filter(|p| (0.0..=1.0).contains(p))
+                .map(|p| p as f32);
+            Some(WordResult {
+                text: text.to_string(),
+                start_ms,
+                end_ms,
+                confidence,
+            })
+        })
+        .collect();
 
     Ok(Transcription {
         text,
-        words: Vec::new(),
+        words,
         language,
         processing_latency_ms,
+        speech_segments: Vec::new(),
     })
+}
+
+fn parse_whisper_server_payload(payload: &Value, processing_latency_ms: u32) -> Result<Transcription> {
+    let segments = payload.get("segments").and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("whisper-server JSON is missing segments"))?;
+    // Some whisper-server versions repeat the transcript in zero-duration segments.
+    let segments = segments.iter().filter(|segment| {
+        match (segment.get("start").and_then(Value::as_f64), segment.get("end").and_then(Value::as_f64)) {
+            (Some(start), Some(end)) => end > start,
+            _ => false,
+        }
+    }).collect::<Vec<_>>();
+    let text = segments.iter()
+        .filter_map(|segment| segment.get("text").and_then(Value::as_str))
+        .collect::<String>();
+    let words = segments.iter()
+        .filter_map(|segment| segment.get("words").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|word| {
+            let text = word.get("word")?.as_str()?;
+            let start = word.get("start")?.as_f64()?;
+            let end = word.get("end")?.as_f64()?;
+            if !start.is_finite() || !end.is_finite() || start < 0.0 || end < start {
+                return None;
+            }
+            Some(WordResult {
+                text: text.to_string(),
+                start_ms: (start * 1_000.0).round() as u32,
+                end_ms: (end * 1_000.0).round() as u32,
+                confidence: word.get("probability").and_then(Value::as_f64)
+                    .filter(|p| (0.0..=1.0).contains(p)).map(|p| p as f32),
+            })
+        })
+        .collect();
+    let language = payload.get("language").and_then(Value::as_str).map(|name| match name {
+        "english" => "en".to_string(),
+        "ukrainian" => "uk".to_string(),
+        other => other.to_string(),
+    });
+    Ok(Transcription { text, words, language, processing_latency_ms, speech_segments: Vec::new() })
 }
 
 fn normalize_model_key(model: &str) -> Result<&'static str> {
@@ -682,7 +991,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        parse_whisper_cpp_payload, read_asr_language_config, replace_whisper_language_arg,
+        parse_vad_segments, parse_whisper_cpp_payload, parse_whisper_server_payload,
+        read_asr_language_config, replace_whisper_language_arg,
         resolve_whisper_language_flag, AsrEngine, AsrLanguageConfig, MockEngine, WhisperCppEngine,
     };
 
@@ -762,6 +1072,80 @@ mod tests {
         assert_eq!(result.text, " hello world ");
         assert_eq!(result.language.as_deref(), Some("en"));
         assert_eq!(result.processing_latency_ms, 123);
+    }
+
+    #[test]
+    fn preserves_whisper_cpp_token_offsets_and_probabilities() {
+        let result = parse_whisper_cpp_payload(
+            &json!({
+                "result": {"language": "uk"},
+                "transcription": [{
+                    "text": " Привіт, світе",
+                    "offsets": {"from": 120, "to": 1450},
+                    "tokens": [
+                        {"text": "[_BEG_]", "offsets": {"from": 0, "to": 0}, "p": 0.9},
+                        {"text": " Привіт", "offsets": {"from": 120, "to": 660}, "p": 0.94},
+                        {"text": ",", "offsets": {"from": 660, "to": 700}, "p": 0.81},
+                        {"text": " світе", "offsets": {"from": 800, "to": 1450}, "p": 0.88}
+                    ]
+                }]
+            }),
+            50,
+        )
+        .unwrap();
+
+        assert_eq!(result.words.len(), 3);
+        assert_eq!(result.words[0].text, " Привіт");
+        assert_eq!(result.words[0].start_ms, 120);
+        assert_eq!(result.words[0].end_ms, 660);
+        assert_eq!(result.words[0].confidence, Some(0.94));
+        assert_eq!(result.words[1].text, ",");
+        assert_eq!(result.words[2].start_ms, 800);
+    }
+
+    #[test]
+    fn parses_persistent_server_word_timing_and_language() {
+        let result = parse_whisper_server_payload(&json!({
+            "language": "ukrainian",
+            "segments": [{
+                "text": " Привіт",
+                "start": 0.12,
+                "end": 0.66,
+                "words": [{"word": " Привіт", "start": 0.12, "end": 0.66, "probability": 0.94}]
+            }]
+        }), 45).unwrap();
+        assert_eq!(result.language.as_deref(), Some("uk"));
+        assert_eq!(result.text, " Привіт");
+        assert_eq!(result.words[0].start_ms, 120);
+        assert_eq!(result.words[0].end_ms, 660);
+        assert_eq!(result.words[0].confidence, Some(0.94));
+    }
+
+    #[test]
+    fn ignores_zero_duration_server_repetitions() {
+        let result = parse_whisper_server_payload(&json!({
+            "language": "ukrainian",
+            "segments": [
+                {"text": " Володіння автомобілями.", "start": 0.0, "end": 3.5,
+                    "words": [{"word": " Володіння", "start": 0.0, "end": 1.0, "probability": 0.9}]},
+                {"text": " Володіння автомобілями.", "start": 3.5, "end": 3.5,
+                    "words": [{"word": " Володіння", "start": 3.5, "end": 3.5, "probability": 0.9}]}
+            ]
+        }), 50).unwrap();
+        assert_eq!(result.text, " Володіння автомобілями.");
+        assert_eq!(result.words.len(), 1);
+    }
+
+    #[test]
+    fn parses_vad_centiseconds_into_audio_milliseconds() {
+        let segments = parse_vad_segments(
+            "Detected 2 speech segments:\nSpeech segment 0: start = 20.00, end = 239.00\nSpeech segment 1: start = 315.00, end = 453.00\n"
+        ).unwrap();
+        assert_eq!(segments[0].start_ms, 200);
+        assert_eq!(segments[0].end_ms, 2390);
+        assert_eq!(segments[1].start_ms, 3150);
+        assert_eq!(segments[1].end_ms, 4530);
+        assert!(parse_vad_segments("Detected 0 speech segments:\n").unwrap().is_empty());
     }
 
     #[test]

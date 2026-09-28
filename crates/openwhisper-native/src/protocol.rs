@@ -10,6 +10,14 @@ pub struct WordResult {
     pub confidence: Option<f32>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SpeechSegment {
+    #[serde(rename = "startMs", alias = "start_ms")]
+    pub start_ms: u32,
+    #[serde(rename = "endMs", alias = "end_ms")]
+    pub end_ms: u32,
+}
+
 // Messages native helper -> ASR worker.
 
 #[derive(Serialize, Debug, Clone)]
@@ -55,6 +63,10 @@ pub enum FromWorker {
         words: Vec<WordResult>,
         language: Option<String>,
         processing_latency_ms: u32,
+        #[serde(default)]
+        speech_segments: Vec<SpeechSegment>,
+        #[serde(default)]
+        audio_path: Option<String>,
     },
 
     #[serde(rename = "transcript.error")]

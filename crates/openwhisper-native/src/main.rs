@@ -205,7 +205,7 @@ async fn main() -> Result<()> {
                                 processing_latency_ms,
                             }).await;
                         }
-                        FromWorker::TranscriptFinal { text, words, language, processing_latency_ms } => {
+                        FromWorker::TranscriptFinal { text, words, language, processing_latency_ms, speech_segments, audio_path } => {
                             if !text.trim().is_empty() {
                                 let to_type = text.clone();
                                 tokio::task::spawn_blocking(move || inject::type_text(&to_type));
@@ -215,6 +215,8 @@ async fn main() -> Result<()> {
                                 words,
                                 language,
                                 processing_latency_ms,
+                                speech_segments,
+                                audio_path,
                             }).await;
                         }
                         FromWorker::TranscriptError { error, chunk_timestamp } => {

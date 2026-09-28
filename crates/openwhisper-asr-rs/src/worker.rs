@@ -138,6 +138,7 @@ where
     is_model_loaded: bool,
     recording: Option<Box<dyn ActiveRecording>>,
     recorder_factory: F,
+    retain_recordings: bool,
 }
 
 impl<F> WorkerState<F>
@@ -150,6 +151,7 @@ where
             is_model_loaded: false,
             recording: None,
             recorder_factory,
+            retain_recordings: recordings_dir().is_some(),
         }
     }
 
@@ -277,10 +279,17 @@ where
             }];
         }
 
-        let mut events = Vec::new();
-        events.push(self.transcribe_file(&recording_path));
-        let _ = std::fs::remove_file(recording_path);
-        events
+        let mut event = self.transcribe_file(&recording_path);
+        let keep_audio = self.retain_recordings
+            && matches!(&event, WorkerEvent::TranscriptFinal { text, .. } if !text.trim().is_empty());
+        if keep_audio {
+            if let WorkerEvent::TranscriptFinal { audio_path, .. } = &mut event {
+                *audio_path = Some(recording_path.to_string_lossy().into_owned());
+            }
+        } else {
+            let _ = std::fs::remove_file(recording_path);
+        }
+        vec![event]
     }
 
     fn transcribe_file(&mut self, audio_path: &Path) -> WorkerEvent {
@@ -297,6 +306,8 @@ where
                 words: transcription.words,
                 language: transcription.language,
                 processing_latency_ms: transcription.processing_latency_ms,
+                speech_segments: transcription.speech_segments,
+                audio_path: None,
             },
             Err(error) => WorkerEvent::TranscriptError {
                 error: error.to_string(),
@@ -335,6 +346,9 @@ fn unix_secs() -> u64 {
 
 fn default_recorder_factory() -> Result<Box<dyn ActiveRecording>> {
     let path = default_recording_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let session = start_default_recording_session(path)?;
     Ok(Box::new(session))
 }
@@ -344,11 +358,18 @@ fn worker_engine() -> Box<dyn AsrEngine> {
 }
 
 fn default_recording_path() -> PathBuf {
-    std::env::temp_dir().join(format!(
+    let directory = recordings_dir().unwrap_or_else(std::env::temp_dir);
+    directory.join(format!(
         "openwhisper-asr-rs-{}-{}.wav",
         std::process::id(),
         unix_timestamp_nanos()
     ))
+}
+
+fn recordings_dir() -> Option<PathBuf> {
+    std::env::var_os("OPENWHISPER_RECORDINGS_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 fn unix_timestamp_nanos() -> u128 {
@@ -369,7 +390,8 @@ mod tests {
 
     use crate::audio_capture::{write_debug_wav, WORKER_SAMPLE_RATE_HZ};
 
-    use super::{run_worker_with_dependencies, unix_timestamp_nanos, ActiveRecording};
+    use super::{run_worker_with_dependencies, unix_timestamp_nanos, ActiveRecording, WorkerState};
+    use crate::protocol::WorkerCommand;
 
     const V1_COMMANDS: &str = include_str!("../test_data/protocol/v1_commands.ndjson");
 
@@ -482,6 +504,7 @@ mod tests {
                     words: Vec::new(),
                     language: None,
                     processing_latency_ms: 1_618,
+                    speech_segments: Vec::new(),
                 })
             }
         }
@@ -545,6 +568,26 @@ mod tests {
             )
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn dictation_keeps_audio_and_reports_its_path_when_retention_is_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("retained.wav");
+        let mut state = WorkerState::new(
+            || Ok(Box::new(FakeRecording { path: path.clone() }) as Box<dyn ActiveRecording>),
+            Box::new(MockEngine::default()),
+        );
+        state.retain_recordings = true;
+        state.handle(WorkerCommand::DictationStart);
+        let (events, _) = state.handle(WorkerCommand::DictationStop);
+        assert!(path.is_file());
+        match &events[0] {
+            crate::protocol::WorkerEvent::TranscriptFinal { audio_path, .. } => {
+                assert_eq!(audio_path.as_deref(), path.to_str());
+            }
+            other => panic!("expected transcript.final, got {other:?}"),
+        }
     }
 
     #[test]

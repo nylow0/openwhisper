@@ -64,7 +64,8 @@
         "to": "models",
         "filter": [
           "ggml-medium.en-q8_0.bin",
-          "ggml-large-v3-turbo-q8_0.bin"
+          "ggml-large-v3-turbo-q8_0.bin",
+          "ggml-silero-v6.2.0.bin"
         ]
       },
       {
@@ -72,6 +73,8 @@
         "to": "whispercpp/cpu",
         "filter": [
           "whisper-cli.exe",
+          "whisper-server.exe",
+          "whisper-vad-speech-segments.exe",
           "*.dll"
         ]
       },
@@ -80,6 +83,8 @@
         "to": "whispercpp/gpu",
         "filter": [
           "whisper-cli.exe",
+          "whisper-server.exe",
+          "whisper-vad-speech-segments.exe",
           "*.dll"
         ]
       }

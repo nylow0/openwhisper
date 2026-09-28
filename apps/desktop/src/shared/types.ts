@@ -1,10 +1,16 @@
 // Shared event and app data types for OpenWhisper.
 
 export interface WordResult {
+  /** Decoder token. A token may be a word fragment or punctuation. */
   text: string;
   startMs: number;
   endMs: number;
   confidence?: number;
+}
+
+export interface SpeechSegment {
+  startMs: number;
+  endMs: number;
 }
 
 export interface DictationStartedEvent {
@@ -30,6 +36,8 @@ export interface TranscriptFinalEvent {
   words: WordResult[];
   language?: string | null;
   processingLatencyMs?: number;
+  speechSegments?: SpeechSegment[];
+  audioPath?: string;
 }
 
 export interface StatusEvent {
@@ -183,6 +191,9 @@ export interface HistoryItem {
   text: string;
   language: string | null;
   latencyMs: number | null;
+  words?: WordResult[];
+  speechSegments?: SpeechSegment[];
+  audioPath?: string;
   /** Epoch milliseconds. */
   createdAt: number;
 }

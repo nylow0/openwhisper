@@ -66,6 +66,10 @@ pub enum WorkerEvent {
         words: Vec<WordResult>,
         language: Option<String>,
         processing_latency_ms: u32,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        speech_segments: Vec<crate::engine::SpeechSegment>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        audio_path: Option<String>,
     },
 
     #[serde(rename = "transcript.error")]
@@ -123,6 +127,8 @@ mod tests {
             words: vec![],
             language: Some("en".to_string()),
             processing_latency_ms: 12,
+            speech_segments: vec![],
+            audio_path: None,
         };
 
         let value = serde_json::to_value(event).unwrap();

@@ -123,8 +123,15 @@ Required behavior:
 ### `transcript.final`
 
 ```json
-{"type":"transcript.final","text":"hello world","words":[{"text":"hello","start_ms":0,"end_ms":320,"confidence":0.92}],"language":"en","processing_latency_ms":42}
+{"type":"transcript.final","text":"hello world","words":[{"text":" hello","start_ms":100,"end_ms":320,"confidence":0.92}],"language":"en","processing_latency_ms":42,"speech_segments":[{"start_ms":80,"end_ms":740}],"audio_path":"C:\\Users\\me\\AppData\\Roaming\\OpenWhisper\\recordings\\clip.wav"}
 ```
+
+`words` keeps the legacy field name. Its entries are decoder tokens, including
+punctuation or word fragments, with the original text, millisecond offsets, and
+token probability. `speech_segments` contains Silero VAD spans in the original
+audio timeline. `audio_path` is present for successful desktop dictation when
+recording retention is enabled; file transcription does not take ownership of
+its input. These two optional fields are omitted when unavailable.
 
 ### `transcript.error`
 

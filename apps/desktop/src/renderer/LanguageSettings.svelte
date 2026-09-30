@@ -1,12 +1,12 @@
 <script lang="ts">
   // Inline language picker (Settings → Languages). Edits a draft; an Apply bar
   // appears once it differs from the saved settings. Applying restarts the engine.
-  // Languages saved when the page opened are pinned to the top of the list.
+  // Saved languages are pinned to the top on open and after Apply.
   import { createEventDispatcher, getContext } from 'svelte';
   import { fly } from 'svelte/transition';
   import Flag from './Flag.svelte';
   import Toggle from './Toggle.svelte';
-  import { engineStatus, restartEngine, saveSettings, settings } from './app-state';
+  import { engineStatus, saveSettings, settings } from './app-state';
   import {
     draftFromSettings,
     draftToSettings,
@@ -18,7 +18,7 @@
   import { LANGUAGES, searchLanguages } from './languages';
 
   const dispatch = createEventDispatcher<{ switchModel: void }>();
-  const pushToast = getContext<(message: string) => void>('pushToast');
+  const restartEngine = getContext<() => Promise<void>>('restartEngine');
 
   let draft: LanguageDraft | null = null;
   let pinned: string[] = [];
@@ -38,8 +38,8 @@
   async function apply() {
     if (!draft || !$settings) return;
     await saveSettings(draftToSettings(draft, $settings));
-    const result = await restartEngine();
-    if (!result.ok) pushToast(`Engine restart failed: ${result.error ?? 'unknown error'}`);
+    reset();
+    await restartEngine();
   }
 </script>
 

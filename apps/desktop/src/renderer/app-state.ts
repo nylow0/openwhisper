@@ -28,14 +28,10 @@ export const engineStatus = writable<EngineStatus>('starting');
 
 const api = window.api;
 
-// The helper process drops its pipe while restarting; ignore that disconnect
-// (and a late one right after) instead of reporting a lost engine.
+// The helper drops its pipe while restarting. A late close within the grace
+// window must confirm the new connection rather than hide a new helper crash.
 const RESTART_GRACE_MS = 1_000;
 let restartGraceUntil = 0;
-
-function isRestartExpected(): boolean {
-  return get(engineStatus) === 'restarting' || Date.now() < restartGraceUntil;
-}
 
 async function refreshEngineStatus(): Promise<void> {
   if (!api) return;
@@ -49,7 +45,8 @@ async function refreshEngineStatus(): Promise<void> {
 
 /**
  * Loads settings, history, and engine status, and subscribes to their updates.
- * `onUnexpectedDisconnect` fires when the engine drops outside a restart.
+ * `onUnexpectedDisconnect` fires for an unexpected loss, including a failed
+ * connection check after a late disconnect during restart grace.
  * Returns an unsubscribe function.
  */
 export function initAppState(onUnexpectedDisconnect: () => void): () => void {
@@ -68,7 +65,13 @@ export function initAppState(onUnexpectedDisconnect: () => void): () => void {
       if (get(engineStatus) !== 'restarting') engineStatus.set(status.workerHealthy ? 'ready' : 'offline');
     }),
     api.onDisconnected(() => {
-      if (isRestartExpected()) return;
+      if (get(engineStatus) === 'restarting') return;
+      if (Date.now() < restartGraceUntil) {
+        void refreshEngineStatus().then(() => {
+          if (get(engineStatus) === 'offline') onUnexpectedDisconnect();
+        });
+        return;
+      }
       engineStatus.set('offline');
       onUnexpectedDisconnect();
     }),

@@ -38,8 +38,9 @@
 
   const RESTART_ACTION: ToastAction = { label: 'Restart engine', run: restartFromUi };
 
-  // Settings raises toasts through this.
+  // Settings shares the shell's toast and restart reporting policy.
   setContext('pushToast', pushToast);
+  setContext('restartEngine', restartFromUi);
 
   let cleanup: (() => void) | undefined;
   let unsubError: (() => void) | undefined;

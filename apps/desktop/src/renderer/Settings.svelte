@@ -6,7 +6,7 @@
   import { fade } from 'svelte/transition';
   import LanguageSettings from './LanguageSettings.svelte';
   import Toggle from './Toggle.svelte';
-  import { DEVICES, MODELS, engineStatus, history, restartEngine, saveSettings, settings } from './app-state';
+  import { DEVICES, MODELS, engineStatus, history, saveSettings, settings } from './app-state';
   import type { AsrDevice, AsrModel } from '../shared/types';
 
   type Section = 'engine' | 'languages' | 'general' | 'about';
@@ -18,7 +18,7 @@
     { id: 'about', name: 'About' },
   ];
 
-  const pushToast = getContext<(message: string) => void>('pushToast');
+  const restartEngine = getContext<() => Promise<void>>('restartEngine');
 
   let section: Section = 'engine';
 
@@ -36,15 +36,10 @@
     },
   ];
 
-  async function applyEngineChange() {
-    const result = await restartEngine();
-    if (!result.ok) pushToast(`Engine restart failed: ${result.error ?? 'unknown error'}`);
-  }
-
   async function chooseModel(model: AsrModel) {
     if (!$settings || restarting || $settings.model === model) return;
     await saveSettings({ model });
-    await applyEngineChange();
+    await restartEngine();
     // The multilingual model is only as good as its language list; show it next.
     if (model === 'large_v3_turbo_q8') section = 'languages';
   }
@@ -52,7 +47,7 @@
   async function chooseDevice(device: AsrDevice) {
     if (!$settings || restarting || $settings.device === device) return;
     await saveSettings({ device });
-    await applyEngineChange();
+    await restartEngine();
   }
 </script>
 
@@ -132,7 +127,7 @@
               type="button"
               disabled={restarting}
               class="rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-blue-300 ring-1 ring-[#1f3b5c] hover:bg-[#0f1822] disabled:animate-breathe"
-              on:click={applyEngineChange}
+              on:click={restartEngine}
             >
               {restarting ? 'Restarting…' : 'Restart'}
             </button>

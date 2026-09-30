@@ -1,4 +1,5 @@
 import Overlay from './Overlay.svelte';
+import '@fontsource-variable/plus-jakarta-sans';
 import './overlay.css';
 
 const el = document.getElementById('overlay');

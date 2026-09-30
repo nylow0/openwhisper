@@ -1,4 +1,5 @@
 import App from './App.svelte';
+import '@fontsource-variable/plus-jakarta-sans';
 import './app.css';
 
 const el = document.getElementById('app');

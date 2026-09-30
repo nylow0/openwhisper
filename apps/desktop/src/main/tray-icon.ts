@@ -56,8 +56,8 @@ function encodePng(size: number, rgba: Buffer): Buffer {
 }
 
 /**
- * Builds the OpenWhisper icon at the requested size: an indigo rounded square
- * with a white "record" dot. Rendered at 4x and box-downscaled with
+ * Builds the OpenWhisper icon at the requested size: a rounded square with a
+ * diagonal blue→cyan gradient (the app's accent) and a white "record" dot. Rendered at 4x and box-downscaled with
  * premultiplied alpha for smooth edges.
  */
 export function createAppIcon(size: number): NativeImage {
@@ -86,9 +86,11 @@ export function createAppIcon(size: number): NativeImage {
         shape[i + 2] = 255;
         shape[i + 3] = 255;
       } else if (insideSquare) {
-        shape[i] = 99;
-        shape[i + 1] = 102;
-        shape[i + 2] = 241;
+        // Top-left #3b82f6 (blue) to bottom-right #22d3ee (cyan).
+        const t = (px + py) / (2 * big);
+        shape[i] = Math.round(59 + (34 - 59) * t);
+        shape[i + 1] = Math.round(130 + (211 - 130) * t);
+        shape[i + 2] = Math.round(246 + (238 - 246) * t);
         shape[i + 3] = 255;
       }
     }

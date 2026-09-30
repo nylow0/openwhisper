@@ -132,13 +132,13 @@ function createMainWindow(): void {
     minWidth: 720,
     minHeight: 560,
     show: false,
-    backgroundColor: '#09090b',
+    backgroundColor: '#0b0d10',
     autoHideMenuBar: true,
     icon: createAppIcon(256),
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#09090b',
-      symbolColor: '#d4d4d8',
+      color: '#0b0d10',
+      symbolColor: '#9aa4b0',
       height: 44,
     },
     webPreferences: {

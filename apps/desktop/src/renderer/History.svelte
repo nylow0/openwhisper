@@ -1,185 +1,164 @@
 <script lang="ts">
-  import { getContext, onDestroy, onMount } from 'svelte';
-  import { fly } from 'svelte/transition';
-  import { flip } from 'svelte/animate';
+  // Transcript history: a dotted timeline grouped by day. Clicking a transcript opens
+  // it in place with its stats and actions. The newest one starts open.
+  import { getContext } from 'svelte';
+  import { fade, slide } from 'svelte/transition';
+  import { history } from './app-state';
+  import { LANGUAGE_BY_ID } from './languages';
   import type { HistoryItem } from '../shared/types';
 
   const api = window.api;
   const pushToast = getContext<(message: string) => void>('pushToast');
 
-  let items: HistoryItem[] = [];
   let query = '';
+  let openId: string | null | undefined; // undefined = not chosen yet, newest opens
   let copiedId: string | null = null;
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
-  let unsubHistory: (() => void) | undefined;
 
+  $: latestId = $history[0]?.id;
+  $: if (openId === undefined && latestId) openId = latestId;
   $: needle = query.trim().toLowerCase();
-  $: filtered = needle ? items.filter((item) => item.text.toLowerCase().includes(needle)) : items;
+  $: groups = groupByDay(needle ? $history.filter((item) => item.text.toLowerCase().includes(needle)) : $history);
 
-  onMount(async () => {
-    if (!api) return;
-    unsubHistory = api.onHistoryChanged((next: HistoryItem[]) => {
-      items = next;
-    });
-    items = await api.getHistory();
-  });
-
-  onDestroy(() => {
-    unsubHistory?.();
-    if (copiedTimer) clearTimeout(copiedTimer);
-  });
-
-  async function copyItem(item: HistoryItem) {
+  async function copy(item: HistoryItem) {
     try {
       await navigator.clipboard.writeText(item.text);
       copiedId = item.id;
       if (copiedTimer) clearTimeout(copiedTimer);
-      copiedTimer = setTimeout(() => {
-        copiedId = null;
-      }, 1500);
+      copiedTimer = setTimeout(() => (copiedId = null), 1500);
     } catch (e) {
       pushToast('Failed to copy: ' + (e as Error).message);
     }
   }
 
-  async function deleteItem(item: HistoryItem) {
-    await api?.deleteHistoryItem(item.id);
+  function dayLabel(ms: number): string {
+    const day = new Date(ms).setHours(0, 0, 0, 0);
+    const today = new Date().setHours(0, 0, 0, 0);
+    if (day === today) return 'Today';
+    if (day === new Date(today - 86_400_000).setHours(0, 0, 0, 0)) return 'Yesterday';
+    return new Date(ms).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
   }
 
-  async function clearAll() {
-    await api?.clearHistory();
+  /** Buckets newest-first items into consecutive days. */
+  function groupByDay(items: HistoryItem[]): Array<{ label: string; items: HistoryItem[] }> {
+    const result: Array<{ label: string; items: HistoryItem[] }> = [];
+    for (const item of items) {
+      const label = dayLabel(item.createdAt);
+      const last = result[result.length - 1];
+      if (last?.label === label) last.items.push(item);
+      else result.push({ label, items: [item] });
+    }
+    return result;
   }
 
-  function formatWhen(ms: number) {
-    const date = new Date(ms);
-    const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    if (date.toDateString() === new Date().toDateString()) return time;
-    return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${time}`;
+  function stats(item: HistoryItem): Array<{ label: string; value: string }> {
+    const language = item.language ? LANGUAGE_BY_ID.get(item.language)?.name ?? item.language.toUpperCase() : '—';
+    return [
+      { label: 'Language', value: language },
+      { label: 'Latency', value: item.latencyMs === null ? '—' : `${item.latencyMs} ms` },
+      { label: 'Words', value: String(item.text.split(/\s+/).filter(Boolean).length) },
+      { label: 'Characters', value: String(item.text.length) },
+    ];
   }
 </script>
 
-<div class="flex h-full flex-col">
-  <!-- Header + search -->
-  <div class="shrink-0 px-7 pt-6">
-    <h1 class="text-lg font-semibold text-zinc-100">History</h1>
-    <p class="mt-0.5 text-[12px] text-zinc-500">
-      Everything you've dictated. Hold Ctrl + Win anywhere to add more.
-    </p>
-    <div class="mt-4 flex items-center gap-2.5">
-      <div class="relative flex-1">
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-600"
-          aria-hidden="true"
-        >
-          <circle cx="11" cy="11" r="7" />
-          <path d="m21 21-4.3-4.3" />
-        </svg>
-        <input
-          type="text"
-          placeholder="Search transcripts…"
-          bind:value={query}
-          class="w-full rounded-lg border border-zinc-800 bg-zinc-900 py-2 pl-9 pr-3 text-[13px] text-zinc-100 placeholder:text-zinc-600 focus:border-indigo-500/50 focus:outline-none"
-        />
-      </div>
-      <button
-        type="button"
-        class="shrink-0 rounded-lg border border-zinc-800 px-3 py-2 text-[12px] font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 disabled:pointer-events-none disabled:opacity-40"
-        on:click={clearAll}
-        disabled={items.length === 0}
-      >
-        Clear all
-      </button>
-    </div>
-  </div>
+<div class="flex shrink-0 items-center gap-4 px-8 pb-2 pt-5">
+  <input
+    type="text"
+    placeholder="Search"
+    bind:value={query}
+    class="flex-1 border-b border-ink-700 bg-transparent py-2 text-[14px] text-white placeholder:text-ink-500 focus:border-blue-500 focus:outline-none"
+  />
+  {#if $history.length > 0}
+    <button type="button" class="text-[13px] text-ink-400 hover:text-white" on:click={() => api?.clearHistory()}>
+      Clear all
+    </button>
+  {/if}
+</div>
 
-  <!-- Transcript list -->
-  <div class="scroll-area mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto px-7 pb-6">
-    {#if items.length === 0}
-      <div class="flex min-h-[260px] flex-col items-center justify-center gap-3 text-center">
-        <div class="flex h-14 w-14 items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-900 text-zinc-700">
-          <svg viewBox="0 0 24 24" fill="none" class="h-6 w-6" aria-hidden="true">
-            <circle cx="12" cy="12" r="2.4" fill="currentColor" />
-            <path d="M7.5 7.5a6.4 6.4 0 0 0 0 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-            <path d="M16.5 7.5a6.4 6.4 0 0 1 0 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-            <path d="M4.4 4.4a10.6 10.6 0 0 0 0 15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity="0.45" />
-            <path d="M19.6 4.4a10.6 10.6 0 0 1 0 15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity="0.45" />
-          </svg>
-        </div>
-        <div>
-          <p class="text-[13px] font-medium text-zinc-400">No transcripts yet</p>
-          <p class="mt-0.5 text-[12px] text-zinc-600">
-            Hold Ctrl + Win, speak, and release — your words appear here.
-          </p>
-        </div>
+<div class="scroll-area min-h-0 flex-1 overflow-y-auto px-8 pb-10">
+  {#if $history.length === 0}
+    <div class="flex items-center gap-6 pt-14" in:fade={{ duration: 150 }}>
+      <div class="flex gap-2">
+        {#each ['Ctrl', 'Win'] as key}
+          <kbd
+            class="rounded-xl border border-[#1f3b5c] border-b-[3px] border-b-[#1e4f7a] bg-[#0f1822] px-4 py-2.5 font-sans text-[16px] font-semibold text-sky-300 shadow-[0_0_24px_rgba(34,211,238,0.12)]"
+          >
+            {key}
+          </kbd>
+        {/each}
       </div>
-    {:else if filtered.length === 0}
-      <div class="flex min-h-[200px] items-center justify-center text-center">
-        <p class="text-[13px] text-zinc-500">No transcripts match “{query}”.</p>
+      <div>
+        <p class="text-[18px] font-semibold">Nothing here yet.</p>
+        <p class="mt-1 max-w-[420px] text-[14px] leading-relaxed text-ink-300">
+          Hold both keys in any app, speak, and let go. Your words are typed at your cursor and saved here.
+        </p>
       </div>
-    {:else}
-      {#each filtered as item (item.id)}
-        <article
-          in:fly={{ y: 8, duration: 200 }}
-          animate:flip={{ duration: 200 }}
-          class="group rounded-xl border border-zinc-800 bg-zinc-900 p-3.5 transition-colors hover:border-zinc-700"
-        >
-          <div class="mb-1.5 flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2 text-[11px] text-zinc-500">
-              <span class="tabular-nums">{formatWhen(item.createdAt)}</span>
-              {#if item.language}
-                <span class="rounded bg-zinc-800 px-1.5 py-0.5 font-medium uppercase text-zinc-400">
-                  {item.language}
-                </span>
-              {/if}
-              {#if item.latencyMs !== null}
-                <span class="tabular-nums">{item.latencyMs} ms</span>
-              {/if}
+    </div>
+  {:else if groups.length === 0}
+    <p class="pt-10 text-[14px] text-ink-400">Nothing matches “{query}”.</p>
+  {:else}
+    {#each groups as group}
+      <p class="pb-1 pt-5 text-[12px] font-medium text-ink-500">{group.label}</p>
+      {#each group.items as item (item.id)}
+        {@const open = openId === item.id}
+        <div class="rounded-xl {open ? 'my-2 bg-ink-900 ring-1 ring-ink-700' : ''}">
+          <button
+            type="button"
+            class="flex w-full items-start gap-4 rounded-xl py-2.5 text-left {open ? 'px-4 pt-4' : 'hover:bg-ink-900/60'}"
+            aria-expanded={open}
+            on:click={() => (openId = open ? null : item.id)}
+          >
+            <span
+              class="mt-[9px] h-[5px] w-[5px] shrink-0 rounded-full {item.id === latestId
+                ? 'bg-cyan-400 shadow-[0_0_6px_#22d3ee]'
+                : open
+                  ? 'bg-blue-500'
+                  : 'bg-ink-600'}"
+            ></span>
+            <span
+              class="min-w-0 flex-1 text-[15px] leading-[1.6] {open || item.id === latestId ? 'text-white' : 'text-ink-150'} {open
+                ? 'whitespace-pre-wrap break-words'
+                : 'line-clamp-2'}"
+            >
+              {item.text}
+            </span>
+            <span class="w-20 shrink-0 pt-[3px] text-right text-[13px] tabular-nums text-ink-500">
+              {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </button>
+          {#if open}
+            <div class="px-4 pb-4 pl-[37px]" transition:slide={{ duration: 180 }}>
+              <div class="grid grid-cols-4 gap-6 border-t border-ink-700 pt-3">
+                {#each stats(item) as cell}
+                  <div>
+                    <p class="text-[11px] text-ink-400">{cell.label}</p>
+                    <p class="mt-0.5 text-[14px] tabular-nums">{cell.value}</p>
+                  </div>
+                {/each}
+              </div>
+              <div class="mt-4 flex gap-2">
+                <button
+                  type="button"
+                  class="rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition-colors {copiedId === item.id
+                    ? 'bg-cyan-950 text-cyan-300'
+                    : 'bg-blue-500 text-white hover:bg-blue-400'}"
+                  on:click={() => copy(item)}
+                >
+                  {copiedId === item.id ? 'Copied' : 'Copy'}
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg px-3 py-1.5 text-[13px] text-ink-300 hover:bg-ink-800 hover:text-rose-400"
+                  on:click={() => api?.deleteHistoryItem(item.id)}
+                >
+                  Delete
+                </button>
+              </div>
             </div>
-            <div class="flex items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100">
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors hover:bg-zinc-800 {copiedId ===
-                item.id
-                  ? 'text-emerald-400'
-                  : 'text-zinc-400 hover:text-zinc-100'}"
-                on:click={() => copyItem(item)}
-              >
-                {#if copiedId === item.id}
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true">
-                    <path d="M20 6 9 17l-5-5" />
-                  </svg>
-                  Copied
-                {:else}
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true">
-                    <rect x="9" y="9" width="11" height="11" rx="2.5" />
-                    <path d="M5 15V5.5A2.5 2.5 0 0 1 7.5 3H16" />
-                  </svg>
-                  Copy
-                {/if}
-              </button>
-              <button
-                type="button"
-                class="rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-rose-400"
-                on:click={() => deleteItem(item)}
-                aria-label="Delete transcript"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true">
-                  <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          <p class="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-100">
-            {item.text}
-          </p>
-        </article>
+          {/if}
+        </div>
       {/each}
-    {/if}
-  </div>
+    {/each}
+  {/if}
 </div>

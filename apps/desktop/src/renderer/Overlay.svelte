@@ -2,6 +2,7 @@
   // Recording overlay (HUD): a one-line pill near the bottom of the screen that follows
   // a dictation from recording to the typed result. One coloured dot carries the state:
   // pulsing cyan while listening, breathing blue while writing, rose on error.
+  // The pill is pure black with a faint light border so it stays visible over dark apps.
   import { onDestroy, onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import type { ErrorEvent, TranscriptFinalEvent, TranscriptPartialEvent } from '../shared/types';
@@ -86,7 +87,7 @@
 
 <div class="flex h-screen items-end justify-center p-5">
   <div
-    class="flex w-full items-center gap-3 rounded-full border border-ink-700 bg-ink-900 py-3 pl-5 pr-5 shadow-[0_10px_40px_rgba(0,0,0,0.45)]"
+    class="flex w-full items-center gap-3 rounded-full border border-white/20 bg-black py-3 pl-5 pr-5 shadow-[0_10px_40px_rgba(0,0,0,0.45)]"
   >
     <span class="relative flex h-2 w-2 shrink-0">
       {#if phase === 'recording'}
